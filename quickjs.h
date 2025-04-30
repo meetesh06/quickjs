@@ -409,6 +409,7 @@ typedef struct JSMallocFunctions {
 #define JS_DUMP_BYTECODE_FINAL   0x01  /* dump pass 3 final byte code */
 #define JS_DUMP_BYTECODE_PASS2   0x02  /* dump pass 2 code */
 #define JS_DUMP_BYTECODE_PASS1   0x04  /* dump pass 1 code */
+#define JS_PROFILE_BYTECODE_FREQ 0x08  /* profile bytecode */
 #define JS_DUMP_BYTECODE_HEX     0x10  /* dump bytecode in hex */
 #define JS_DUMP_BYTECODE_PC2LINE 0x20  /* dump line number table */
 #define JS_DUMP_BYTECODE_STACK   0x40  /* dump compute_stack_size */
@@ -1082,6 +1083,17 @@ JS_EXTERN JSAtom JS_GetScriptOrModuleName(JSContext *ctx, int n_stack_levels);
 /* only exported for os.Worker() */
 JS_EXTERN JSValue JS_LoadModule(JSContext *ctx, const char *basename,
                                 const char *filename);
+
+typedef enum {
+    JS_GC_OBJ_TYPE_JS_OBJECT,
+    JS_GC_OBJ_TYPE_FUNCTION_BYTECODE,
+    JS_GC_OBJ_TYPE_SHAPE,
+    JS_GC_OBJ_TYPE_VAR_REF,
+    JS_GC_OBJ_TYPE_ASYNC_FUNCTION,
+    JS_GC_OBJ_TYPE_JS_CONTEXT,
+} JSGCObjectTypeEnum;
+
+void add_gc_object(JSRuntime *rt, JSGCObjectHeader *h, JSGCObjectTypeEnum type);
 
 /* C function definition */
 typedef enum JSCFunctionEnum {  /* XXX: should rename for namespace isolation */

@@ -336,14 +336,14 @@ typedef struct JSStackFrame {
     JSValue *cur_sp;
 } JSStackFrame;
 
-typedef enum {
-    JS_GC_OBJ_TYPE_JS_OBJECT,
-    JS_GC_OBJ_TYPE_FUNCTION_BYTECODE,
-    JS_GC_OBJ_TYPE_SHAPE,
-    JS_GC_OBJ_TYPE_VAR_REF,
-    JS_GC_OBJ_TYPE_ASYNC_FUNCTION,
-    JS_GC_OBJ_TYPE_JS_CONTEXT,
-} JSGCObjectTypeEnum;
+// typedef enum {
+//     JS_GC_OBJ_TYPE_JS_OBJECT,
+//     JS_GC_OBJ_TYPE_FUNCTION_BYTECODE,
+//     JS_GC_OBJ_TYPE_SHAPE,
+//     JS_GC_OBJ_TYPE_VAR_REF,
+//     JS_GC_OBJ_TYPE_ASYNC_FUNCTION,
+//     JS_GC_OBJ_TYPE_JS_CONTEXT,
+// } JSGCObjectTypeEnum;
 
 /* header for GC objects. GC objects are C data structures with a
    reference count that can reference other GC objects. JS Objects are
@@ -1289,8 +1289,8 @@ static JSValue js_c_function_data_call(JSContext *ctx, JSValueConst func_obj,
                                        JSValueConst this_val,
                                        int argc, JSValueConst *argv, int flags);
 static JSAtom js_symbol_to_atom(JSContext *ctx, JSValueConst val);
-static void add_gc_object(JSRuntime *rt, JSGCObjectHeader *h,
-                          JSGCObjectTypeEnum type);
+// static void add_gc_object(JSRuntime *rt, JSGCObjectHeader *h,
+//                           JSGCObjectTypeEnum type);
 static void remove_gc_object(JSGCObjectHeader *h);
 static void js_async_function_free0(JSRuntime *rt, JSAsyncFunctionData *s);
 static JSValue js_instantiate_prototype(JSContext *ctx, JSObject *p, JSAtom atom, void *opaque);
@@ -5780,7 +5780,8 @@ void JS_FreeValue(JSContext *ctx, JSValue v)
 
 /* garbage collection */
 
-static void add_gc_object(JSRuntime *rt, JSGCObjectHeader *h,
+// static 
+void add_gc_object(JSRuntime *rt, JSGCObjectHeader *h,
                           JSGCObjectTypeEnum type)
 {
     h->mark = 0;
@@ -27658,7 +27659,7 @@ fail:
 #endif // QJS_DISABLE_PARSER
 
 /* 'name' is freed */
-static JSModuleDef *js_new_module_def(JSContext *ctx, JSAtom name)
+JSModuleDef *js_new_module_def(JSContext *ctx, JSAtom name)
 {
     JSModuleDef *m;
     m = js_mallocz(ctx, sizeof(*m));
@@ -28921,7 +28922,7 @@ static JSValue js_import_meta(JSContext *ctx)
     return JS_GetImportMeta(ctx, m);
 }
 
-static JSValue JS_NewModuleValue(JSContext *ctx, JSModuleDef *m)
+JSValue JS_NewModuleValue(JSContext *ctx, JSModuleDef *m)
 {
     return js_dup(JS_MKPTR(JS_TAG_MODULE, m));
 }
@@ -30414,6 +30415,45 @@ static __maybe_unused void dump_pc2line(JSContext *ctx,
     return;
 fail:
     printf("invalid pc2line encode pos=%d\n", (int)(p - buf));
+}
+
+static void dump_bytecode_buffer(FILE * target, const uint8_t *tab, int len)
+{
+    const JSOpCode *oi;
+    int pos, op, size;
+
+    pos = 0;
+    while (pos < len) {
+        op = tab[pos];
+        if (op >= OP_COUNT) {
+            fprintf(target, "invalid opcode (0x%02x)\n", op);
+            pos++;
+            continue;
+        }
+        oi = &short_opcode_info(op);
+        size = oi->size;
+        if (pos + size > len) {
+            fprintf(target, "truncated opcode (0x%02x)\n", op);
+            break;
+        }
+        fprintf(target, "%s\n", oi->name);  /* align opcode arguments */
+        pos++;
+        pos += oi->size - 1;
+    }
+}
+
+static void js_profile_bc_freq(JSFunctionBytecode *b) {
+    if (!getenv("DUMP_TARGET")) return;
+    const char* filename = getenv("DUMP_TARGET");
+
+    FILE* target = fopen(filename, "a");
+    if (!target) {
+        fprintf(stderr, "[js_profile_bc_freq] Failed to open %s", filename);
+        return;
+    }
+
+    dump_bytecode_buffer(target, b->byte_code_buf, b->byte_code_len);
+    fclose(target);
 }
 
 static __maybe_unused void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b)
@@ -33945,6 +33985,12 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
     if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_FINAL))
         js_dump_function_bytecode(ctx, b);
 #endif
+
+#ifdef ENABLE_DUMPS // JS_PROFILE_BYTECODE FREQUENCY
+    if (check_dump_flag(ctx->rt, JS_PROFILE_BYTECODE_FREQ))
+        js_profile_bc_freq(b);
+#endif
+
 
     if (fd->parent) {
         /* remove from parent list */

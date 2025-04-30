@@ -231,6 +231,8 @@ set(qjs_sources
     libunicode.c
     quickjs.c
     xsum.c
+    iridium.c
+    cJSON.c
 )
 
 if(QJS_BUILD_LIBC)

@@ -36,6 +36,8 @@
 #include "quickjs.h"
 #include "quickjs-libc.h"
 
+#include "./iridium.h"
+
 #ifdef QJS_USE_MIMALLOC
 #include <mimalloc.h>
 #endif
@@ -374,8 +376,10 @@ static const JSMallocFunctions mi_mf = {
 
 void help(void)
 {
-    printf("QuickJS-ng version %s\n"
+    printf("QuickJS-ng-super version %s\n"
            "usage: " PROG_NAME " [options] [file [args]]\n"
+           "-O  --iOpt         Optimize Iridium Code\n"
+           "-R  --iRun         Run Iridium Code\n"
            "-h  --help         list options\n"
            "-e  --eval EXPR    evaluate EXPR\n"
            "-i  --interactive  go to interactive mode\n"
@@ -413,6 +417,7 @@ int main(int argc, char **argv)
     int standalone = 0;
     int interactive = 0;
     int dump_memory = 0;
+    int iridium_opts = 0;
     int dump_flags = 0;
     int trace_memory = 0;
     int empty_run = 0;
@@ -505,6 +510,17 @@ int main(int argc, char **argv)
             }
             if (opt == 'd' || !strcmp(longopt, "dump")) {
                 dump_memory++;
+                continue;
+            }
+            // 
+            // Iridium options
+            // 
+            if (opt == 'J' || !strcmp(longopt, "iridiumOpt")) {
+                setBit(0, &iridium_opts);
+                continue;
+            }
+            if (opt == 'K' || !strcmp(longopt, "iridiumRun")) {
+                setBit(1, &iridium_opts);
                 continue;
             }
             if (opt == 'D' || !strcmp(longopt, "dump-flags")) {
@@ -681,10 +697,20 @@ start:
             /* interactive mode */
             interactive = 1;
         } else {
-            const char *filename;
-            filename = argv[optind];
-            if (eval_file(ctx, filename, module))
-                goto fail;
+            // if (isBitSet(0, iridium_opts)) {
+            //     // Optimize Iridium code
+            //     iridium_optimize(argv[optind]);
+            // }
+
+            if (isBitSet(1, iridium_opts)) {
+                // Run Iridium code
+                eval_iri_file(ctx, argv[optind]);
+            } else {
+                const char *filename;
+                filename = argv[optind];
+                if (eval_file(ctx, filename, module))
+                    goto fail;
+            }
         }
         if (interactive) {
             JS_SetHostPromiseRejectionTracker(rt, NULL, NULL);
