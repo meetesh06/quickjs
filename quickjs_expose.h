@@ -323,6 +323,8 @@ struct JSModuleDef {
 
 JSValue JS_NewModuleValue(JSContext *ctx, JSModuleDef *m);
 
+void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b);
+
 #ifdef __cplusplus
 }
 #endif

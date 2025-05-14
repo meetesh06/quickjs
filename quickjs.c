@@ -2339,7 +2339,7 @@ void JS_SetContextOpaque(JSContext *ctx, void *opaque)
 
 /* set the new value and free the old value after (freeing the value
    can reallocate the object data) */
-static inline void set_value(JSContext *ctx, JSValue *pval, JSValue new_val)
+static void set_value(JSContext *ctx, JSValue *pval, JSValue new_val)
 {
     JSValue old_val;
     old_val = *pval;
@@ -30456,7 +30456,7 @@ static void js_profile_bc_freq(JSFunctionBytecode *b) {
     fclose(target);
 }
 
-static __maybe_unused void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b)
+void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b)
 {
     int i;
     char atom_buf[ATOM_GET_STR_BUF_SIZE];

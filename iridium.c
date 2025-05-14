@@ -4,6 +4,33 @@
 #include "cJSON.h"
 #include "./quickjs_expose.h"
 #include "./quickjs-opcode.h"
+#include "./cutils.h"
+#include <assert.h>
+
+typedef enum OPCodeFormat
+{
+#define FMT(f) OP_FMT_##f,
+#define DEF(id, size, n_pop, n_push, f)
+#include "quickjs-opcode.h"
+#undef DEF
+#undef FMT
+} OPCodeFormat;
+
+typedef enum {
+    /* XXX: add more variable kinds here instead of using bit fields */
+    JS_VAR_NORMAL,
+    JS_VAR_FUNCTION_DECL, /* lexical var with function declaration */
+    JS_VAR_NEW_FUNCTION_DECL, /* lexical var with async/generator
+                                 function declaration */
+    JS_VAR_CATCH,
+    JS_VAR_FUNCTION_NAME, /* function expression name */
+    JS_VAR_PRIVATE_FIELD,
+    JS_VAR_PRIVATE_METHOD,
+    JS_VAR_PRIVATE_GETTER,
+    JS_VAR_PRIVATE_SETTER, /* must come after JS_VAR_PRIVATE_GETTER */
+    JS_VAR_PRIVATE_GETTER_SETTER, /* must come after JS_VAR_PRIVATE_SETTER */
+} JSVarKindEnum;
+
 
 typedef enum OPCodeEnum
 {
@@ -27,6 +54,36 @@ typedef enum OPCodeEnum
 #undef FMT
   OP_TEMP_END,
 } OPCodeEnum;
+
+#define ENABLE_DUMPS
+
+typedef struct JSOpCode
+{
+#ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_*
+  const char *name;
+#endif
+  uint8_t size; /* in bytes */
+  /* the opcodes remove n_pop items from the top of the stack, then
+     pushes n_push items */
+  uint8_t n_pop;
+  uint8_t n_push;
+  uint8_t fmt;
+} JSOpCode;
+
+static const JSOpCode opcode_info[OP_COUNT + (OP_TEMP_END - OP_TEMP_START)] = {
+#define FMT(f)
+#ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_*
+#define DEF(id, size, n_pop, n_push, f) {#id, size, n_pop, n_push, OP_FMT_##f},
+#else
+#define DEF(id, size, n_pop, n_push, f) {size, n_pop, n_push, OP_FMT_##f},
+#endif
+#include "quickjs-opcode.h"
+#undef DEF
+#undef FMT
+};
+
+#define short_opcode_info(op) \
+  opcode_info[(op) >= OP_TEMP_START ? (op) + (OP_TEMP_END - OP_TEMP_START) : (op)]
 
 //
 // Reading and loading source JSON data
@@ -80,7 +137,7 @@ void populateArgs(IridiumSEXP *res, cJSON *args)
   res->args = malloc(argsNum * sizeof(IridiumSEXP **));
   for (int i = 0; i < argsNum; ++i)
   {
-    res->args[i] = handleIridiumSEXP(cJSON_GetArrayItem(args, i));
+    res->args[i] = parseIridiumSEXP(cJSON_GetArrayItem(args, i));
   }
 }
 
@@ -137,6 +194,49 @@ IridiumSEXP *parseNode(char *tag, cJSON *args, cJSON *flags)
   return res;
 }
 
+IridiumSEXP *parseIridiumSEXP(cJSON *node)
+{
+  if (cJSON_IsArray(node))
+  {
+    cJSON *tagPtr = node->child;
+    char *tag;
+    if (!cJSON_IsString(tagPtr))
+    {
+      fprintf(stderr, "Iridium parsing failed, expected tag to be a string\n");
+      exit(1);
+    }
+    tag = cJSON_GetStringValue(tagPtr);
+
+    cJSON *args = node->child->next;
+    cJSON *flags = node->child->next->next;
+
+    // Pre-Assertions
+    if (!cJSON_IsArray(args))
+    {
+      fprintf(stderr, "Expected args to be an array");
+      exit(1);
+    }
+
+    if (!cJSON_IsArray(flags))
+    {
+      fprintf(stderr, "Expected flags to be an array");
+      exit(1);
+    }
+
+    // parse node
+    return parseNode(tag, args, flags);
+
+    fprintf(stdout, "%s", tag);
+  }
+  else
+  {
+    fprintf(stderr, "Iridium parsing failed, expected an array");
+    exit(1);
+  }
+
+  return NULL;
+}
+
 //
 // Printing Iridium S-Expression Tree
 //
@@ -190,47 +290,532 @@ void dumpIridiumSEXP(FILE *target, IridiumSEXP *node, int space)
   }
 }
 
-IridiumSEXP *handleIridiumSEXP(cJSON *node)
+//
+// Generate Bytecode
+//
+typedef struct BCLList
 {
-  if (cJSON_IsArray(node))
+  struct BCLList *next;
+  uint8_t bc;
+  bool hasPoolData;
+  JSValue poolData;
+  union
   {
-    cJSON *tagPtr = node->child;
-    char *tag;
-    if (!cJSON_IsString(tagPtr))
-    {
-      fprintf(stderr, "Iridium parsing failed, expected tag to be a string\n");
+    uint8_t one;
+    uint16_t two;
+    uint32_t four;
+  } data;
+  uint8_t valueSize;
+  // Extend the data structure to accomodate arguments dynamically
+} BCLList;
+
+// ============== Push OP ============== //
+BCLList *pushOP(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode)
+{
+  currTarget->next = js_mallocz(ctx, sizeof(BCLList));
+  currTarget = currTarget->next;
+  currTarget->next = NULL;
+  currTarget->bc = opcode;
+  currTarget->hasPoolData = false;
+  currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->valueSize = 0;
+  currTarget->data.four = 0;
+  return currTarget;
+}
+
+BCLList *pushOP8(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint8_t data)
+{
+  currTarget->next = js_mallocz(ctx, sizeof(BCLList));
+  currTarget = currTarget->next;
+  currTarget->next = NULL;
+  currTarget->bc = opcode;
+  currTarget->hasPoolData = false;
+  currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->valueSize = 1;
+  currTarget->data.one = data;
+  return currTarget;
+}
+
+BCLList *pushOP16(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint16_t data)
+{
+  currTarget->next = js_mallocz(ctx, sizeof(BCLList));
+  currTarget = currTarget->next;
+  currTarget->next = NULL;
+  currTarget->bc = opcode;
+  currTarget->hasPoolData = false;
+  currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->valueSize = 2;
+  currTarget->data.two = data;
+  return currTarget;
+}
+
+BCLList *pushOP32(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint32_t data)
+{
+  currTarget->next = js_mallocz(ctx, sizeof(BCLList));
+  currTarget = currTarget->next;
+  currTarget->next = NULL;
+  currTarget->bc = opcode;
+  currTarget->hasPoolData = false;
+  currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->valueSize = 4;
+  currTarget->data.four = data;
+  return currTarget;
+}
+
+BCLList *pushOPConst(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, JSValue cData)
+{
+  currTarget->next = js_mallocz(ctx, sizeof(BCLList));
+  currTarget = currTarget->next;
+  currTarget->next = NULL;
+  currTarget->bc = opcode;
+  currTarget->hasPoolData = true;
+  currTarget->poolData = cData;
+  currTarget->valueSize = 4;
+  currTarget->data.four = 0;
+  return currTarget;
+}
+// ============== Push OP ============== //
+
+// ============== Flag Related ============== //
+
+bool isTag(IridiumSEXP *node, const char *const tag)
+{
+  return strcmp(node->tag, tag) == 0;
+}
+
+void ensureTag(IridiumSEXP *node, const char *const tag)
+{
+  if (!isTag(node, tag))
+  {
+    fprintf(stderr, "Expected tag %s, found %s\n", tag, node->tag);
+    exit(1);
+  }
+}
+
+bool hasFlag(IridiumSEXP *node, char *flagToCheck)
+{
+  for (int i = 0; i < node->numFlags; i++)
+  {
+    IridiumFlag *flag = node->flags[i];
+    if (strcmp(flag->name, flagToCheck) == 0)
+      return true;
+  }
+  return false;
+}
+
+void ensureFlag(IridiumSEXP *node, char *flag)
+{
+  if (!hasFlag(node, flag))
+  {
+    fprintf(stderr, "Expected flag %s not found\n", flag);
+    exit(1);
+  }
+}
+
+IridiumFlag *getFlag(IridiumSEXP *node, const char *const flagToCheck)
+{
+  for (int i = 0; i < node->numFlags; i++)
+  {
+    IridiumFlag *flag = node->flags[i];
+    if (strcmp(flag->name, flagToCheck) == 0)
+      return flag;
+  }
+  fprintf(stderr, "Failed to get flag, %s not found\n", flagToCheck);
+  exit(1);
+}
+
+int getFlagNumber(IridiumSEXP *binding, char *flagName)
+{
+  IridiumFlag *flag = getFlag(binding, flagName);
+  if (flag->datatype == NUMBER)
+  {
+    return flag->value.number;
+  }
+  fprintf(stderr, "TODO: failed to get NUMBER\n");
+  exit(1);
+}
+
+char *getFlagString(IridiumSEXP *binding, char *flagName)
+{
+  IridiumFlag *flag = getFlag(binding, flagName);
+  if (flag->datatype == STRING)
+  {
+    return flag->value.string;
+  }
+  fprintf(stderr, "TODO: failed to get STRING\n");
+  exit(1);
+}
+
+bool getFlagBoolean(IridiumSEXP *binding, char *flagName)
+{
+  IridiumFlag *flag = getFlag(binding, flagName);
+  if (flag->datatype == BOOLEAN)
+  {
+    return flag->value.boolean;
+  }
+  fprintf(stderr, "TODO: failed to get BOOLEAN\n");
+  exit(1);
+}
+
+int getFlagNull(IridiumSEXP *binding, char *flagName)
+{
+  IridiumFlag *flag = getFlag(binding, flagName);
+  if (flag->datatype == NULLPTR)
+  {
+    return 0;
+  }
+  fprintf(stderr, "TODO: failed to get NULLPTR\n");
+  exit(1);
+}
+// ============== Flag Related ============== //
+
+BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
+{
+  if (isTag(rval, "String"))
+  {
+    char *data = getFlagString(rval, "IridiumPrimitive");
+    JSAtom strAtom = JS_NewAtom(ctx, data);
+    return pushOP32(ctx, currTarget, OP_push_atom_value, strAtom);
+  }
+  else if (isTag(rval, "Number"))
+  {
+    int data = getFlagNumber(rval, "IridiumPrimitive");
+    JSValue jsvalue = JS_NewNumber(ctx, data);
+    return pushOPConst(ctx, currTarget, OP_push_const, jsvalue);
+  }
+  else if (isTag(rval, "JSNUBD"))
+  {
+    return pushOPConst(ctx, currTarget, OP_push_const, JS_UNINITIALIZED);
+  }
+  else if (isTag(rval, "EnvBinding"))
+  {
+    int refIDX = getFlagNumber(rval, "REFIDX");
+    if (hasFlag(rval, "ClosureVAR")) {
+      return pushOP16(ctx, currTarget, OP_get_var_ref, refIDX);
+    } else {
+      return pushOP16(ctx, currTarget, OP_get_loc, refIDX);
+    }
+  }
+  else if (isTag(rval, "GlobalBinding"))
+  {
+    return pushOP32(ctx, currTarget, OP_get_var, JS_NewAtom(ctx, getFlagString(rval->args[0], "IridiumPrimitive")));
+  }
+  else if (isTag(rval, "CallSiteSEXP"))
+  {
+    for (int i = 0; i < rval->numArgs; i++) {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
+    }
+    if (hasFlag(rval, "CCall")) {
+      return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs - 2);
+    } else {
+      return pushOP16(ctx, currTarget, OP_call, rval->numArgs - 1);
+    }
+  }
+  else if (isTag(rval, "EnvRead"))
+  {
+    return lowerToStack(ctx, currTarget, rval->args[0]);
+  }
+  else if (isTag(rval, "Binop"))
+  {
+    char * op = getFlagString(rval->args[0], "IridiumPrimitive");
+    if (strcmp(op, "+") == 0) {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_add);
+    } else {
+      fprintf(stderr, "TODO: binop %s\n", op);
       exit(1);
     }
-    tag = cJSON_GetStringValue(tagPtr);
-
-    cJSON *args = node->child->next;
-    cJSON *flags = node->child->next->next;
-
-    // Pre-Assertions
-    if (!cJSON_IsArray(args))
-    {
-      fprintf(stderr, "Expected args to be an array");
-      exit(1);
-    }
-
-    if (!cJSON_IsArray(flags))
-    {
-      fprintf(stderr, "Expected flags to be an array");
-      exit(1);
-    }
-
-    // parse node
-    return parseNode(tag, args, flags);
-
-    fprintf(stdout, "%s", tag);
+  }
+  else if (isTag(rval, "FieldRead"))
+  {
+    IridiumSEXP *receiver = rval->args[0];
+    currTarget = lowerToStack(ctx, currTarget, receiver);
+    IridiumSEXP *field = rval->args[1];
+    ensureTag(field, "String");
+    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+    return pushOP32(ctx, currTarget, OP_get_field2, fieldAtom);
   }
   else
   {
-    fprintf(stderr, "Iridium parsing failed, expected an array");
+    fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
     exit(1);
   }
 
-  return NULL;
+  return currTarget;
+}
+
+bool isSimpleAssignment(IridiumSEXP *currStmt)
+{
+  return currStmt->numArgs == 2 && isTag(currStmt->args[0], "EnvBinding");
+}
+
+BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
+{
+  // BINDING = VAL
+  if (isSimpleAssignment(currStmt))
+  {
+    // Lower RVal
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
+
+    IridiumSEXP *binding = currStmt->args[0];
+    int refIdx = getFlagNumber(binding, "REFIDX");
+
+    // Write to LocalVar
+    if (hasFlag(binding, "ClosureVAR"))
+    {
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
+    }
+    else if (hasFlag(binding, "LocalVAR"))
+    {
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    }
+    else
+    {
+      fprintf(stderr, "TODO: Binding kind not specified!!");
+      exit(1);
+    }
+  }
+  else
+  {
+    fprintf(stderr, "TODO: unhandled env write: %s\n", currStmt->tag);
+    exit(1);
+  }
+
+  return currTarget;
+}
+
+BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
+{
+  if (isTag(currStmt, "EnvWrite"))
+  {
+    return handleEnvWrite(ctx, currTarget, currStmt);
+  }
+  else if (isTag(currStmt, "Goto"))
+  {
+    return pushOP32(ctx, currTarget, OP_goto, 0);
+  }
+  else
+  {
+    fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
+    exit(1);
+  }
+  return currTarget;
+}
+
+int getPoolSize(BCLList * bcList) {
+  if (bcList) {
+    if (bcList->hasPoolData) {
+      return 1 + getPoolSize(bcList->next);
+    }
+    return getPoolSize(bcList->next);
+  }
+  return 0;
+}
+
+int getBCSize(BCLList * bcList) {
+  if (bcList) {
+    return short_opcode_info(bcList->bc).size + getBCSize(bcList->next);
+  }
+  return 0;
+}
+
+void populateCPool(BCLList * bcList, JSValue * cpool) {
+  if (bcList) {
+    if (bcList->hasPoolData) {
+      uint32_t offset = bcList->data.four;
+      *(cpool + offset) = bcList->poolData;
+    }
+    return populateCPool(bcList->next, cpool);
+  }
+}
+
+void populateBytecode(uint8_t * target, BCLList * currBC, int poolIDX) {
+  if (!currBC) return;
+  if (currBC->hasPoolData) {
+    currBC->data.four = poolIDX++;
+    assert(currBC->valueSize == 4);
+  }
+  target[0] = currBC->bc;
+  if (currBC->valueSize == 1) {
+    uint8_t * t = (uint8_t *) (target + 1);
+    *t = currBC->data.one;
+  } else if (currBC->valueSize == 2) {
+    uint16_t * t = (uint16_t *) (target + 1);
+    *t = currBC->data.two;
+  } else if (currBC->valueSize == 4) {
+    uint32_t * t = (uint32_t *) (target + 1);
+    *t = currBC->data.four;
+  }
+  return populateBytecode(target + short_opcode_info(currBC->bc).size, currBC->next, poolIDX);
+}
+
+
+BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
+{
+  IridiumSEXP *file = node;
+  ensureTag(file, "File");
+  ensureFlag(file, "JSModule");
+
+  IridiumSEXP *scopeDescriptors = file->args[0];
+  ensureTag(scopeDescriptors, "ScopeDescriptorContainer");
+
+  BCLList **bcList = js_mallocz(ctx, (node->numArgs - 1) * sizeof(BCLList *));
+
+  for (int i = 1; i < file->numArgs; ++i)
+  {
+    IridiumSEXP *bbContainer = file->args[i];
+    ensureTag(bbContainer, "BBContainer");
+
+    BCLList *bcTarget = js_mallocz(ctx, sizeof(BCLList));
+    BCLList *temp = bcTarget;
+    BCLList *startBC = bcTarget;
+    bcList[i] = bcTarget;
+
+    bcTarget->next = NULL;
+    bcTarget->bc = 0;
+    bcTarget->hasPoolData = false;
+    bcTarget->poolData = JS_UNINITIALIZED;
+    bcTarget->data.four = 0;
+    bcTarget->valueSize = 0;
+
+    // OP_push_this,
+    // OP_if_false8,
+    // 2,
+    // OP_return_undef,
+
+    // Header
+    bcTarget = pushOP(ctx, bcTarget, OP_push_this);
+    bcTarget = pushOP8(ctx, bcTarget, OP_if_false8, 2);
+    bcTarget = pushOP(ctx, bcTarget, OP_return_undef);
+
+    for (int idx = 0; idx < bbContainer->numArgs; idx++)
+    {
+      IridiumSEXP *bb = bbContainer->args[idx];
+      ensureTag(bb, "BB");
+      for (int stmtIDX = 0; stmtIDX < bb->numArgs; stmtIDX++)
+      {
+        IridiumSEXP *currStmt = bb->args[stmtIDX];
+        bcTarget = handleIriStmt(ctx, bcTarget, currStmt);
+      }
+    }
+    bcTarget = pushOP(ctx, bcTarget, OP_return_async);
+
+    int i = 0;
+    temp = temp->next;
+    while (temp)
+    {
+      fprintf(stdout, "BC[%d]: %s (size = %d bytes)", i, short_opcode_info(temp->bc).name, short_opcode_info(temp->bc).size);
+      assert(short_opcode_info(temp->bc).size == (temp->valueSize + 1));
+
+      if (temp->bc == OP_push_const)
+      {
+        JSValue jsvalue = temp->poolData;
+        fprintf(stdout, ", CPool: \"%s\"\n", JS_ToCString(ctx, jsvalue));
+      }
+      else if (temp->bc == OP_push_atom_value || temp->bc == OP_get_var || temp->bc == OP_get_field2)
+      {
+        fprintf(stdout, ", StringData(%d): \"%s\"\n", temp->data.four, JS_AtomToCString(ctx, temp->data.four));
+      }
+      else
+      {
+        switch (short_opcode_info(temp->bc).size)
+        {
+        case 2:
+          fprintf(stdout, ", DATA_8: %d\n", temp->data.one);
+          break;
+        case 3:
+          fprintf(stdout, ", DATA_16: %d\n", temp->data.two);
+          break;
+        case 5:
+          fprintf(stdout, ", DATA_32: %d\n", temp->data.four);
+          break;
+        default:
+          fprintf(stdout, "\n");
+        }
+      }
+
+      i += short_opcode_info(temp->bc).size;
+      temp = temp->next;
+    }
+
+    int poolSize = getPoolSize(startBC->next);
+    int varDefSize = getFlagNumber(bbContainer, "LocalVAR");
+    int closureVarSize = getFlagNumber(bbContainer, "ClosureVAR");
+
+    int function_size = sizeof(JSFunctionBytecode);
+    int cpool_offset = function_size;
+    function_size += poolSize * sizeof(JSValue);
+    int vardefs_offset = function_size;
+    function_size += varDefSize * sizeof(JSVarDef);
+    int closure_var_offset = function_size;
+    function_size += closureVarSize * sizeof(JSClosureVar);
+    int byte_code_offset = function_size;
+    function_size += getBCSize(startBC->next);
+
+    
+
+    JSFunctionBytecode *b = js_mallocz(ctx, function_size);
+    if (!b) {
+      fprintf(stderr, "Failed to create bytecode");
+      exit(1);
+    }
+
+    b->header.ref_count = 1;
+    b->header.gc_obj_type = JS_GC_OBJ_TYPE_FUNCTION_BYTECODE;
+
+    // Self Pointers
+    b->cpool = (JSValue *)((uint8_t *)b + cpool_offset);
+    b->vardefs = (JSVarDef *)((uint8_t *)b + vardefs_offset);
+    b->byte_code_buf = (uint8_t *)b + byte_code_offset;
+    b->closure_var = (void *)((uint8_t*)b + closure_var_offset);
+
+    for (int i = 0; i < closureVarSize; i++) {
+      b->closure_var[i].is_local = true;
+      b->closure_var[i].is_arg = false;
+      b->closure_var[i].is_const = false;
+      b->closure_var[i].is_lexical = false;
+      b->closure_var[i].var_kind = JS_VAR_NORMAL;
+      b->closure_var[i].var_idx = i;
+      b->closure_var[i].var_name = JS_NewAtom(ctx, "TEMP");
+    }
+
+    b->cpool_count = getPoolSize(startBC->next);
+    b->var_count = varDefSize;
+    b->arg_count = 0;
+    b->defined_arg_count = 0;
+    b->stack_size = 3;
+    b->closure_var_count = closureVarSize;
+    b->byte_code_len = getBCSize(startBC->next);
+    b->func_name = JS_ATOM_NULL;
+    b->has_prototype = 0;
+    b->has_simple_parameter_list = 0;
+    b->is_strict_mode = 1;
+    b->func_kind = JS_FUNC_NORMAL;
+    b->realm = JS_DupContext(ctx);
+
+    // Populate Bytecode from BCLList
+    populateBytecode(b->byte_code_buf, startBC->next, 0);
+    populateCPool(startBC->next, b->cpool);
+
+    JSRuntime *rt = ctx->rt;
+    /* Insert into GC */
+    add_gc_object(rt, &b->header, JS_GC_OBJ_TYPE_FUNCTION_BYTECODE);
+  
+    JSValue fun_obj = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, b);
+  
+    JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
+    m->func_obj = fun_obj;
+
+
+    fun_obj = JS_NewModuleValue(ctx, m);
+
+    js_dump_function_bytecode(ctx, b);
+
+    JS_EvalFunction(ctx, fun_obj);
+  }
+
+  return bcList;
 }
 
 JSValue create_hello_world(JSContext *ctx)
@@ -242,22 +827,21 @@ JSValue create_hello_world(JSContext *ctx)
   uint16_t callMethodStackSize = 1;
 
   uint8_t bytecode[] = {
-    OP_push_this,
-    OP_if_false8, 
-    2,
-    OP_return_undef,
-    OP_get_var,
-    0, 0, 0, 0, // 32 bytes for console atom 'console'
-    OP_get_field2,
-    0, 0, 0, 0, // 32 bytes for console atom 'log'
-    OP_push_atom_value,
-    0, 0, 0, 0, // 32 bytes for console atom 'Hello World'
-    OP_call_method, 
-    0, 0,
-    OP_drop,
-    OP_undefined,
-    OP_return_async
-  };
+      OP_push_this,
+      OP_if_false8,
+      2,
+      OP_return_undef,
+      OP_get_var,
+      0, 0, 0, 0, // 32 bytes for console atom 'console'
+      OP_get_field2,
+      0, 0, 0, 0, // 32 bytes for console atom 'log'
+      OP_push_atom_value,
+      0, 0, 0, 0, // 32 bytes for console atom 'Hello World'
+      OP_call_method,
+      0, 0,
+      OP_drop,
+      OP_undefined,
+      OP_return_async};
 
   memcpy(bytecode + 5, &atom_console, 4 * sizeof(uint8_t));
   memcpy(bytecode + 10, &atom_log, 4 * sizeof(uint8_t));
@@ -332,23 +916,22 @@ void eval_iri_file(JSContext *ctx, const char *filename)
     exit(1);
   }
 
-  IridiumSEXP *iridiumCode = handleIridiumSEXP(code);
+  IridiumSEXP *iridiumCode = parseIridiumSEXP(code);
+
+  // Generate BC
+
+  generateBytecode(ctx, iridiumCode);
 
   dumpIridiumSEXP(stdout, iridiumCode, 0);
 
-  // Create function object
-  JSValue fun_obj = create_hello_world(ctx);
-  JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
-  m->func_obj = fun_obj;
+  // // Create function object
+  // JSValue fun_obj = create_hello_world(ctx);
+  // JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
+  // m->func_obj = fun_obj;
 
-  fun_obj = JS_NewModuleValue(ctx, m);
+  // fun_obj = JS_NewModuleValue(ctx, m);
 
-  // === Now actually call the function ===
-  // JSValue ret =
-  // JS_Call(ctx, fun_obj, JS_TRUE, 0, NULL);
-  JS_EvalFunction(ctx, fun_obj);
-
-
+  // JS_EvalFunction(ctx, fun_obj);
   cJSON_Delete(json);
 }
 

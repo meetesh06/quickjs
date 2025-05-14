@@ -29,7 +29,7 @@ typedef struct IridiumSEXP {
     int numFlags;
 } IridiumSEXP;
 
-IridiumSEXP *handleIridiumSEXP(cJSON *node);
+IridiumSEXP *parseIridiumSEXP(cJSON *node);
 
 // Given a path to a file, parse and load iridium code
 void eval_iri_file(JSContext *ctx, const char *filename);
