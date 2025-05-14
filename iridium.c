@@ -299,6 +299,8 @@ typedef struct BCLList
   uint8_t bc;
   bool hasPoolData;
   JSValue poolData;
+  bool isLabel;
+  int label;
   union
   {
     uint8_t one;
@@ -310,6 +312,21 @@ typedef struct BCLList
 } BCLList;
 
 // ============== Push OP ============== //
+BCLList *pushLabel(JSContext *ctx, BCLList *currTarget, int label)
+{
+  currTarget->next = js_mallocz(ctx, sizeof(BCLList));
+  currTarget = currTarget->next;
+  currTarget->next = NULL;
+  currTarget->bc = OP_nop;
+  currTarget->hasPoolData = false;
+  currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->isLabel = true;
+  currTarget->label = label;
+  currTarget->valueSize = 0;
+  currTarget->data.four = 0;
+  return currTarget;
+}
+
 BCLList *pushOP(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode)
 {
   currTarget->next = js_mallocz(ctx, sizeof(BCLList));
@@ -318,6 +335,8 @@ BCLList *pushOP(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode)
   currTarget->bc = opcode;
   currTarget->hasPoolData = false;
   currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->isLabel = false;
+  currTarget->label = 0;
   currTarget->valueSize = 0;
   currTarget->data.four = 0;
   return currTarget;
@@ -331,6 +350,8 @@ BCLList *pushOP8(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint8_t
   currTarget->bc = opcode;
   currTarget->hasPoolData = false;
   currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->isLabel = false;
+  currTarget->label = 0;
   currTarget->valueSize = 1;
   currTarget->data.one = data;
   return currTarget;
@@ -344,6 +365,8 @@ BCLList *pushOP16(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint16
   currTarget->bc = opcode;
   currTarget->hasPoolData = false;
   currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->isLabel = false;
+  currTarget->label = 0;
   currTarget->valueSize = 2;
   currTarget->data.two = data;
   return currTarget;
@@ -357,6 +380,8 @@ BCLList *pushOP32(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint32
   currTarget->bc = opcode;
   currTarget->hasPoolData = false;
   currTarget->poolData = JS_UNINITIALIZED;
+  currTarget->isLabel = false;
+  currTarget->label = 0;
   currTarget->valueSize = 4;
   currTarget->data.four = data;
   return currTarget;
@@ -370,6 +395,8 @@ BCLList *pushOPConst(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, JSV
   currTarget->bc = opcode;
   currTarget->hasPoolData = true;
   currTarget->poolData = cData;
+  currTarget->isLabel = false;
+  currTarget->label = 0;
   currTarget->valueSize = 4;
   currTarget->data.four = 0;
   return currTarget;
@@ -593,7 +620,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   }
   else if (isTag(currStmt, "Goto"))
   {
-    return pushOP32(ctx, currTarget, OP_goto, 0);
+    return pushOP32(ctx, currTarget, OP_goto, getFlagNumber(currStmt, "IDX"));
   }
   else
   {
@@ -620,13 +647,47 @@ int getBCSize(BCLList * bcList) {
   return 0;
 }
 
-void populateCPool(BCLList * bcList, JSValue * cpool) {
+void populateCPool(JSContext *ctx, BCLList * bcList, JSValue * cpool) {
   if (bcList) {
     if (bcList->hasPoolData) {
       uint32_t offset = bcList->data.four;
-      *(cpool + offset) = bcList->poolData;
+      *(cpool + offset) = JS_DupValue(ctx, bcList->poolData);
     }
-    return populateCPool(bcList->next, cpool);
+    return populateCPool(ctx, bcList->next, cpool);
+  }
+}
+
+int findOffset(BCLList * bcList, int offset, int targetOffset) {
+  if (bcList) {
+    if (bcList->isLabel && bcList->label == targetOffset) {
+      return offset + short_opcode_info(bcList->bc).size - 1;
+    } else {
+      return findOffset(bcList->next, offset + short_opcode_info(bcList->bc).size, targetOffset);
+    }
+  }
+  fprintf(stderr, "Failed to find BC offset for %d\n", targetOffset);
+  exit(1);
+}
+
+void patchGotos(BCLList * bcList, int currOffset, BCLList * startBcList) {
+  if (bcList) {
+    if (bcList->bc == OP_goto) {
+      uint32_t iriOffset = bcList->data.four;
+      int actualOffset = findOffset(startBcList, 0, iriOffset);
+      fprintf(stdout, "Patching offset %d to %d\n", iriOffset, actualOffset);
+      bcList->data.four = actualOffset - currOffset;
+    }
+    patchGotos(bcList->next, currOffset + short_opcode_info(bcList->bc).size, startBcList);
+  }
+}
+
+void freeBCList(JSContext *ctx, BCLList * bcList) {
+  if (bcList) {
+    freeBCList(ctx, bcList->next);
+    if (bcList->hasPoolData) {
+      JS_FreeValue(ctx, bcList->poolData);
+    }
+    js_free(ctx, bcList);
   }
 }
 
@@ -679,30 +740,33 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
     bcTarget->data.four = 0;
     bcTarget->valueSize = 0;
 
-    // OP_push_this,
-    // OP_if_false8,
-    // 2,
-    // OP_return_undef,
-
-    // Header
+    // Module Header
     bcTarget = pushOP(ctx, bcTarget, OP_push_this);
     bcTarget = pushOP8(ctx, bcTarget, OP_if_false8, 2);
     bcTarget = pushOP(ctx, bcTarget, OP_return_undef);
 
+    // Module Body
     for (int idx = 0; idx < bbContainer->numArgs; idx++)
     {
       IridiumSEXP *bb = bbContainer->args[idx];
       ensureTag(bb, "BB");
+      bcTarget = pushLabel(ctx, bcTarget, getFlagNumber(bb, "IDX"));
       for (int stmtIDX = 0; stmtIDX < bb->numArgs; stmtIDX++)
       {
         IridiumSEXP *currStmt = bb->args[stmtIDX];
         bcTarget = handleIriStmt(ctx, bcTarget, currStmt);
       }
     }
+
+    // Patch GOTOs
+    patchGotos(startBC->next, 0, startBC->next);
+
+    // Module Exit
+    bcTarget = pushOP(ctx, bcTarget, OP_undefined);
     bcTarget = pushOP(ctx, bcTarget, OP_return_async);
 
     int i = 0;
-    temp = temp->next;
+    temp = startBC->next;
     while (temp)
     {
       fprintf(stdout, "BC[%d]: %s (size = %d bytes)", i, short_opcode_info(temp->bc).name, short_opcode_info(temp->bc).size);
@@ -734,7 +798,6 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
           fprintf(stdout, "\n");
         }
       }
-
       i += short_opcode_info(temp->bc).size;
       temp = temp->next;
     }
@@ -742,6 +805,7 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
     int poolSize = getPoolSize(startBC->next);
     int varDefSize = getFlagNumber(bbContainer, "LocalVAR");
     int closureVarSize = getFlagNumber(bbContainer, "ClosureVAR");
+    int bcSize = getBCSize(startBC->next);
 
     int function_size = sizeof(JSFunctionBytecode);
     int cpool_offset = function_size;
@@ -751,16 +815,13 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
     int closure_var_offset = function_size;
     function_size += closureVarSize * sizeof(JSClosureVar);
     int byte_code_offset = function_size;
-    function_size += getBCSize(startBC->next);
-
-    
+    function_size += bcSize;
 
     JSFunctionBytecode *b = js_mallocz(ctx, function_size);
     if (!b) {
       fprintf(stderr, "Failed to create bytecode");
       exit(1);
     }
-
     b->header.ref_count = 1;
     b->header.gc_obj_type = JS_GC_OBJ_TYPE_FUNCTION_BYTECODE;
 
@@ -780,13 +841,13 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
       b->closure_var[i].var_name = JS_NewAtom(ctx, "TEMP");
     }
 
-    b->cpool_count = getPoolSize(startBC->next);
+    b->cpool_count = poolSize;
     b->var_count = varDefSize;
     b->arg_count = 0;
     b->defined_arg_count = 0;
-    b->stack_size = 3;
+    b->stack_size = 4;
     b->closure_var_count = closureVarSize;
-    b->byte_code_len = getBCSize(startBC->next);
+    b->byte_code_len = bcSize;
     b->func_name = JS_ATOM_NULL;
     b->has_prototype = 0;
     b->has_simple_parameter_list = 0;
@@ -796,7 +857,8 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
 
     // Populate Bytecode from BCLList
     populateBytecode(b->byte_code_buf, startBC->next, 0);
-    populateCPool(startBC->next, b->cpool);
+    populateCPool(ctx, startBC->next, b->cpool);
+    freeBCList(ctx, startBC);
 
     JSRuntime *rt = ctx->rt;
     /* Insert into GC */
@@ -807,18 +869,20 @@ BCLList **generateBytecode(JSContext *ctx, IridiumSEXP *node)
     JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
     m->func_obj = fun_obj;
 
-
-    fun_obj = JS_NewModuleValue(ctx, m);
+    JSValue module_obj = JS_NewModuleValue(ctx, m);
 
     js_dump_function_bytecode(ctx, b);
 
-    JS_EvalFunction(ctx, fun_obj);
+    JSValue res = JS_EvalFunction(ctx, module_obj);
+    
+    JS_FreeValue(ctx, res);
+    JS_FreeValue(ctx, fun_obj);
   }
 
   return bcList;
 }
 
-JSValue create_hello_world(JSContext *ctx)
+void hello_world_test(JSContext *ctx)
 {
   JSRuntime *rt = ctx->rt;
   JSAtom atom_console = JS_NewAtom(ctx, "console");
@@ -864,7 +928,7 @@ JSValue create_hello_world(JSContext *ctx)
 
   JSFunctionBytecode *b = js_mallocz(ctx, function_size);
   if (!b)
-    return JS_EXCEPTION;
+    return;
 
   b->header.ref_count = 1;
   b->header.gc_obj_type = JS_GC_OBJ_TYPE_FUNCTION_BYTECODE;
@@ -893,8 +957,19 @@ JSValue create_hello_world(JSContext *ctx)
   /* Insert into GC */
   add_gc_object(rt, &b->header, JS_GC_OBJ_TYPE_FUNCTION_BYTECODE);
 
-  /* Return function */
-  return JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, b);
+  // Evaluate
+  JSValue fun_obj = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, b);
+  JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
+  m->func_obj = fun_obj;
+
+  JSValue module_obj = JS_NewModuleValue(ctx, m);
+
+  JSValue retVal = JS_EvalFunction(ctx, module_obj);
+  
+  JS_FreeValue(ctx, retVal);
+  JS_FreeValue(ctx, fun_obj);
+
+  return;
 }
 
 void eval_iri_file(JSContext *ctx, const char *filename)
@@ -922,10 +997,11 @@ void eval_iri_file(JSContext *ctx, const char *filename)
 
   generateBytecode(ctx, iridiumCode);
 
-  dumpIridiumSEXP(stdout, iridiumCode, 0);
+  // dumpIridiumSEXP(stdout, iridiumCode, 0);
 
-  // // Create function object
-  // JSValue fun_obj = create_hello_world(ctx);
+  // Create function object
+  // JSValue fun_obj = 
+  // hello_world_test(ctx);
   // JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
   // m->func_obj = fun_obj;
 
