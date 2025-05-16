@@ -4,43 +4,46 @@
 #define QUICKJS_EXPOSE_H
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-JSModuleDef *js_new_module_def(JSContext *ctx, JSAtom name);
+  JSModuleDef *js_new_module_def(JSContext *ctx, JSAtom name);
 
-typedef enum JSFunctionKindEnum {
+  typedef enum JSFunctionKindEnum
+  {
     JS_FUNC_NORMAL = 0,
     JS_FUNC_GENERATOR = (1 << 0),
     JS_FUNC_ASYNC = (1 << 1),
     JS_FUNC_ASYNC_GENERATOR = (JS_FUNC_GENERATOR | JS_FUNC_ASYNC),
-} JSFunctionKindEnum;
+  } JSFunctionKindEnum;
 
-// typedef enum {
-//     JS_GC_OBJ_TYPE_JS_OBJECT,
-//     JS_GC_OBJ_TYPE_FUNCTION_BYTECODE,
-//     JS_GC_OBJ_TYPE_SHAPE,
-//     JS_GC_OBJ_TYPE_VAR_REF,
-//     JS_GC_OBJ_TYPE_ASYNC_FUNCTION,
-//     JS_GC_OBJ_TYPE_JS_CONTEXT,
-// } JSGCObjectTypeEnum;
+  // typedef enum {
+  //     JS_GC_OBJ_TYPE_JS_OBJECT,
+  //     JS_GC_OBJ_TYPE_FUNCTION_BYTECODE,
+  //     JS_GC_OBJ_TYPE_SHAPE,
+  //     JS_GC_OBJ_TYPE_VAR_REF,
+  //     JS_GC_OBJ_TYPE_ASYNC_FUNCTION,
+  //     JS_GC_OBJ_TYPE_JS_CONTEXT,
+  // } JSGCObjectTypeEnum;
 
-/* header for GC objects. GC objects are C data structures with a
-   reference count that can reference other GC objects. JS Objects are
-   a particular type of GC object. */
-   struct JSGCObjectHeader {
+  /* header for GC objects. GC objects are C data structures with a
+     reference count that can reference other GC objects. JS Objects are
+     a particular type of GC object. */
+  struct JSGCObjectHeader
+  {
     int ref_count; /* must come first, 32-bit */
     JSGCObjectTypeEnum gc_obj_type : 4;
     uint8_t mark : 4; /* used by the GC */
-    uint8_t dummy1; /* not used by the GC */
-    uint16_t dummy2; /* not used by the GC */
+    uint8_t dummy1;   /* not used by the GC */
+    uint16_t dummy2;  /* not used by the GC */
     struct list_head link;
-};
+  };
 
-
-/* XXX: could use a different structure in bytecode functions to save
-   memory */
-   typedef struct JSVarDef {
+  /* XXX: could use a different structure in bytecode functions to save
+     memory */
+  typedef struct JSVarDef
+  {
     JSAtom var_name;
     /* index into fd->scopes of this variable lexical scope */
     int scope_level;
@@ -57,7 +60,7 @@ typedef enum JSFunctionKindEnum {
     uint8_t is_lexical : 1;
     uint8_t is_captured : 1;
     uint8_t is_static_private : 1; /* only used during private class field parsing */
-    uint8_t var_kind : 4; /* see JSVarKindEnum */
+    uint8_t var_kind : 4;          /* see JSVarKindEnum */
     /* only used during compilation: function pool index for lexical
        variables with var_kind =
        JS_VAR_FUNCTION_DECL/JS_VAR_NEW_FUNCTION_DECL or scope level of
@@ -66,9 +69,10 @@ typedef enum JSFunctionKindEnum {
     int func_pool_idx : 24; /* only used during compilation : index in
                                the constant pool for hoisted function
                                definition */
-} JSVarDef;
+  } JSVarDef;
 
-typedef struct JSClosureVar {
+  typedef struct JSClosureVar
+  {
     uint8_t is_local : 1;
     uint8_t is_arg : 1;
     uint8_t is_const : 1;
@@ -79,9 +83,10 @@ typedef struct JSClosureVar {
                     parent function. otherwise: index to a closure
                     variable of the parent function */
     JSAtom var_name;
-} JSClosureVar;
+  } JSClosureVar;
 
-typedef struct JSFunctionBytecode {
+  typedef struct JSFunctionBytecode
+  {
     JSGCObjectHeader header; /* must come first */
     uint8_t is_strict_mode : 1;
     uint8_t has_prototype : 1; /* true if a prototype field is necessary */
@@ -99,14 +104,14 @@ typedef struct JSFunctionBytecode {
     uint8_t *byte_code_buf; /* (self pointer) */
     int byte_code_len;
     JSAtom func_name;
-    JSVarDef *vardefs; /* arguments + local variables (arg_count + var_count) (self pointer) */
+    JSVarDef *vardefs;         /* arguments + local variables (arg_count + var_count) (self pointer) */
     JSClosureVar *closure_var; /* list of variables in the closure (self pointer) */
     uint16_t arg_count;
     uint16_t var_count;
     uint16_t defined_arg_count; /* for length function property */
-    uint16_t stack_size; /* maximum stack size */
-    JSContext *realm; /* function realm */
-    JSValue *cpool; /* constant pool (self pointer) */
+    uint16_t stack_size;        /* maximum stack size */
+    JSContext *realm;           /* function realm */
+    JSValue *cpool;             /* constant pool (self pointer) */
     int cpool_count;
     int closure_var_count;
     JSAtom filename;
@@ -116,9 +121,10 @@ typedef struct JSFunctionBytecode {
     int pc2line_len;
     uint8_t *pc2line_buf;
     char *source;
-} JSFunctionBytecode;
+  } JSFunctionBytecode;
 
-typedef enum JSErrorEnum {
+  typedef enum JSErrorEnum
+  {
     JS_EVAL_ERROR,
     JS_RANGE_ERROR,
     JS_REFERENCE_ERROR,
@@ -130,17 +136,19 @@ typedef enum JSErrorEnum {
 
     JS_NATIVE_ERROR_COUNT, /* number of different NativeError objects */
     JS_PLAIN_ERROR = JS_NATIVE_ERROR_COUNT
-} JSErrorEnum;
+  } JSErrorEnum;
 
-typedef struct JSShapeProperty {
+  typedef struct JSShapeProperty
+  {
     uint32_t hash_next : 26; /* 0 if last in list */
-    uint32_t flags : 6;   /* JS_PROP_XXX */
-    JSAtom atom; /* JS_ATOM_NULL = free property entry */
-} JSShapeProperty;
+    uint32_t flags : 6;      /* JS_PROP_XXX */
+    JSAtom atom;             /* JS_ATOM_NULL = free property entry */
+  } JSShapeProperty;
 
-typedef struct JSShape JSShape;
+  typedef struct JSShape JSShape;
 
-struct JSShape {
+  struct JSShape
+  {
     /* hash table of size hash_mask + 1 before the start of the
        structure (see prop_hash_end()). */
     JSGCObjectHeader header;
@@ -153,15 +161,16 @@ struct JSShape {
     uint8_t has_small_array_index;
     uint32_t hash; /* current hash value */
     uint32_t prop_hash_mask;
-    int prop_size; /* allocated properties */
+    int prop_size;  /* allocated properties */
     int prop_count; /* include deleted properties */
     int deleted_prop_count;
     JSShape *shape_hash_next; /* in JSRuntime.shape_hash[h] list */
     JSObject *proto;
     JSShapeProperty prop[]; /* prop_size elements */
-};
+  };
 
-struct JSContext {
+  struct JSContext
+  {
     JSGCObjectHeader header; /* must come first */
     JSRuntime *rt;
     struct list_head link;
@@ -169,7 +178,7 @@ struct JSContext {
     uint16_t binary_object_count;
     int binary_object_size;
 
-    JSShape *array_shape;   /* initial shape for Array objects */
+    JSShape *array_shape; /* initial shape for Array objects */
 
     JSValue *class_proto;
     JSValue function_proto;
@@ -189,7 +198,7 @@ struct JSContext {
     JSValue throw_type_error;
     JSValue eval_obj;
 
-    JSValue global_obj; /* global object */
+    JSValue global_obj;     /* global object */
     JSValue global_var_obj; /* contains the global let/const definitions */
 
     double time_origin;
@@ -209,71 +218,83 @@ struct JSContext {
                              const char *input, size_t input_len,
                              const char *filename, int line, int flags, int scope_idx);
     void *user_opaque;
-};
+  };
 
-typedef struct JSRefCountHeader {
+  typedef struct JSRefCountHeader
+  {
     int ref_count;
-} JSRefCountHeader;
+  } JSRefCountHeader;
 
-typedef struct JSReqModuleEntry {
+  typedef struct JSReqModuleEntry
+  {
     JSAtom module_name;
     JSModuleDef *module; /* used using resolution */
-} JSReqModuleEntry;
+  } JSReqModuleEntry;
 
-typedef enum JSExportTypeEnum {
+  typedef enum JSExportTypeEnum
+  {
     JS_EXPORT_TYPE_LOCAL,
     JS_EXPORT_TYPE_INDIRECT,
-} JSExportTypeEnum;
+  } JSExportTypeEnum;
 
-typedef struct JSVarRef {
-    union {
-        JSGCObjectHeader header; /* must come first */
-        struct {
-            int __gc_ref_count; /* corresponds to header.ref_count */
-            uint8_t __gc_mark; /* corresponds to header.mark/gc_obj_type */
-            bool is_detached;
-        };
+  typedef struct JSVarRef
+  {
+    union
+    {
+      JSGCObjectHeader header; /* must come first */
+      struct
+      {
+        int __gc_ref_count; /* corresponds to header.ref_count */
+        uint8_t __gc_mark;  /* corresponds to header.mark/gc_obj_type */
+        bool is_detached;
+      };
     };
     JSValue *pvalue; /* pointer to the value, either on the stack or
                         to 'value' */
-    JSValue value; /* used when the variable is no longer on the stack */
-} JSVarRef;
+    JSValue value;   /* used when the variable is no longer on the stack */
+  } JSVarRef;
 
-
-typedef struct JSExportEntry {
-    union {
-        struct {
-            int var_idx; /* closure variable index */
-            JSVarRef *var_ref; /* if != NULL, reference to the variable */
-        } local; /* for local export */
-        int req_module_idx; /* module for indirect export */
+  typedef struct JSExportEntry
+  {
+    union
+    {
+      struct
+      {
+        int var_idx;       /* closure variable index */
+        JSVarRef *var_ref; /* if != NULL, reference to the variable */
+      } local;             /* for local export */
+      int req_module_idx;  /* module for indirect export */
     } u;
     JSExportTypeEnum export_type;
-    JSAtom local_name; /* '*' if export ns from. not used for local
-                          export after compilation */
+    JSAtom local_name;  /* '*' if export ns from. not used for local
+                           export after compilation */
     JSAtom export_name; /* exported variable name */
-} JSExportEntry;
+  } JSExportEntry;
 
-typedef struct JSStarExportEntry {
+  typedef struct JSStarExportEntry
+  {
     int req_module_idx; /* in req_module_entries */
-} JSStarExportEntry;
+  } JSStarExportEntry;
 
-typedef struct JSImportEntry {
+  typedef struct JSImportEntry
+  {
     int var_idx; /* closure variable index */
     JSAtom import_name;
     int req_module_idx; /* in req_module_entries */
-} JSImportEntry;
+  } JSImportEntry;
 
-typedef enum {
+  typedef enum
+  {
     JS_MODULE_STATUS_UNLINKED,
     JS_MODULE_STATUS_LINKING,
     JS_MODULE_STATUS_LINKED,
     JS_MODULE_STATUS_EVALUATING,
     JS_MODULE_STATUS_EVALUATING_ASYNC,
     JS_MODULE_STATUS_EVALUATED,
-} JSModuleStatus;
+  } JSModuleStatus;
 
-struct JSModuleDef {
+  struct JSModuleDef
+  {
     JSRefCountHeader header; /* must come first, 32-bit */
     JSAtom module_name;
     struct list_head link;
@@ -295,9 +316,9 @@ struct JSModuleDef {
     int import_entries_size;
 
     JSValue module_ns;
-    JSValue func_obj; /* only used for JS modules */
+    JSValue func_obj;            /* only used for JS modules */
     JSModuleInitFunc *init_func; /* only used for C modules */
-    bool has_tla; /* true if func_obj contains await */
+    bool has_tla;                /* true if func_obj contains await */
     bool resolved;
     bool func_created;
     JSModuleStatus status : 8;
@@ -312,18 +333,18 @@ struct JSModuleDef {
     bool async_evaluation;
     int64_t async_evaluation_timestamp;
     JSModuleDef *cycle_root;
-    JSValue promise; /* corresponds to spec field: capability */
+    JSValue promise;            /* corresponds to spec field: capability */
     JSValue resolving_funcs[2]; /* corresponds to spec field: capability */
     /* true if evaluation yielded an exception. It is saved in
        eval_exception */
     bool eval_has_exception;
     JSValue eval_exception;
     JSValue meta_obj; /* for import.meta */
-};
+  };
 
-JSValue JS_NewModuleValue(JSContext *ctx, JSModuleDef *m);
+  JSValue JS_NewModuleValue(JSContext *ctx, JSModuleDef *m);
 
-void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b);
+  void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b);
 
 #ifdef __cplusplus
 }
