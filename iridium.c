@@ -523,12 +523,12 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   else if (isTag(rval, "RemoteEnvBinding"))
   {
     int refIDX = getFlagNumber(rval, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_get_var_ref, refIDX);
+    return pushOP16(ctx, currTarget, OP_get_var_ref_check, refIDX);
   }
   else if (isTag(rval, "EnvBinding"))
   {
     int refIDX = getFlagNumber(rval, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_get_loc, refIDX);
+    return pushOP16(ctx, currTarget, OP_get_loc_check, refIDX);
   }
   else if (isTag(rval, "GlobalBinding"))
   {
@@ -561,6 +561,16 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     return handleEnvWrite(ctx, currTarget, rval);
   }
+  else if (isTag(rval, "Boolean"))
+  {
+    bool res = getFlagBoolean(rval, "IridiumPrimitive");
+    if (res) {
+      return pushOP(ctx, currTarget, OP_push_true);
+    } else {
+      return pushOP(ctx, currTarget, OP_push_false);
+    }
+    
+  }
   else if (isTag(rval, "Binop"))
   {
     char *op = getFlagString(rval->args[0], "IridiumPrimitive");
@@ -569,6 +579,18 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
       currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
       return pushOP(ctx, currTarget, OP_add);
+    }
+    else if (strcmp(op, "==") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_eq);
+    }
+    else if (strcmp(op, "===") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_strict_eq);
     }
     else
     {
@@ -583,7 +605,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     IridiumSEXP *field = rval->args[1];
     ensureTag(field, "String");
     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    return pushOP32(ctx, currTarget, OP_get_field2, fieldAtom);
+    return pushOP32(ctx, currTarget, OP_get_field, fieldAtom);
   }
   else if (isTag(rval, "Lambda"))
   {
@@ -643,6 +665,30 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   if (isTag(currStmt, "EnvWrite"))
   {
     return handleEnvWrite(ctx, currTarget, currStmt);
+  }
+  else if (isTag(currStmt, "IfElseJump"))
+  {
+    // Push check to stack
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+
+    // Jmp to TRUE if stack value is true
+    currTarget = pushOP32(ctx, currTarget, OP_if_true, getFlagNumber(currStmt, "TRUE"));
+    
+    // Jmp to FALSE if stack value is false
+    currTarget = pushOP32(ctx, currTarget, OP_goto, getFlagNumber(currStmt, "FALSE"));
+
+    return currTarget;
+  }
+  else if (isTag(currStmt, "JSModuleStart"))
+  {
+    currTarget = pushOP(ctx, currTarget, OP_push_this);
+    currTarget = pushOP8(ctx, currTarget, OP_if_false8, 2);
+    return pushOP(ctx, currTarget, OP_return_undef);
+  }
+  else if (isTag(currStmt, "JSModuleEnd"))
+  {
+    currTarget = pushOP(ctx, currTarget, OP_undefined);
+    return pushOP(ctx, currTarget, OP_return_async);
   }
   else if (isTag(currStmt, "Goto"))
   {
@@ -751,6 +797,11 @@ void patchGotos(BCLList *bcList, int currOffset, BCLList *startBcList)
       uint32_t iriOffset = bcList->data.four;
       int actualOffset = findOffset(startBcList, 0, iriOffset);
       fprintf(stdout, "Patching offset %d to %d\n", iriOffset, actualOffset);
+      bcList->data.four = actualOffset - currOffset;
+    } else if (bcList->bc == OP_if_true) {
+      uint32_t iriOffset = bcList->data.four;
+      int actualOffset = findOffset(startBcList, 0, iriOffset);
+      fprintf(stdout, "Patching (ifTrue) offset %d to %d\n", iriOffset, actualOffset);
       bcList->data.four = actualOffset - currOffset;
     }
     patchGotos(bcList->next, currOffset + short_opcode_info(bcList->bc).size, startBcList);
@@ -925,7 +976,7 @@ int compute_stack_size(JSContext *ctx, uint8_t *bc_buf, int bcSize)
     oi = &short_opcode_info(op);
     // #ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_STACK
     //         if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_STACK))
-    //             printf("%5d: %10s %5d %5d\n", pos, oi->name, stack_len, catch_pos);
+    printf("%5d: %10s %5d %5d\n", pos, oi->name, stack_len, catch_pos);
     // #endif
     pos_next = pos + oi->size;
     if (pos_next > s->bc_len)
@@ -1074,6 +1125,7 @@ int compute_stack_size(JSContext *ctx, uint8_t *bc_buf, int bcSize)
     }
     if (ss_check(ctx, s, pos_next, op, stack_len, catch_pos))
       goto fail;
+      
   done_insn:;
   }
   js_free(ctx, s->pc_stack);
@@ -1102,7 +1154,7 @@ void dumpBCLList(JSContext *ctx, BCLList *temp)
       JSValue jsvalue = temp->poolData;
       fprintf(stdout, ", DATA_32: %d (\"%s\")\n", temp->data.four, JS_ToCString(ctx, jsvalue));
     }
-    else if (temp->bc == OP_push_atom_value || temp->bc == OP_get_var || temp->bc == OP_get_field2)
+    else if (temp->bc == OP_push_atom_value || temp->bc == OP_get_var || temp->bc == OP_get_field)
     {
       fprintf(stdout, ", StringData(%d): \"%s\"\n", temp->data.four, JS_AtomToCString(ctx, temp->data.four));
     }
@@ -1372,13 +1424,6 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     bcTarget->data.four = 0;
     bcTarget->valueSize = 0;
 
-    if (isTopLevelModule) {
-      // Module Header
-      bcTarget = pushOP(ctx, bcTarget, OP_push_this);
-      bcTarget = pushOP8(ctx, bcTarget, OP_if_false8, 2);
-      bcTarget = pushOP(ctx, bcTarget, OP_return_undef);
-    }
-
     // BB list
     IridiumSEXP *bbList = bbContainer->args[1];
 
@@ -1397,12 +1442,6 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 
     // Patch GOTOs
     patchGotos(startBC->next, 0, startBC->next);
-
-    if (isTopLevelModule) {
-      // Module Exit
-      bcTarget = pushOP(ctx, bcTarget, OP_undefined);
-      bcTarget = pushOP(ctx, bcTarget, OP_return_async);
-    }
 
     JSValue res = generateQjsFunction(ctx, bbContainer, startBC->next);
 
