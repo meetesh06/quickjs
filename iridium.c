@@ -6,6 +6,7 @@
 #include "./quickjs-opcode.h"
 #include "./cutils.h"
 #include <assert.h>
+#include <ctype.h>
 
 #define JS_STACK_SIZE_MAX 65534
 
@@ -526,6 +527,25 @@ int getFlagNull(IridiumSEXP *binding, char *flagName)
 
 BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt);
 
+int parse_arg_index(const char *str)
+{
+  const char *prefix = "ARG";
+  size_t prefix_len = strlen(prefix);
+
+  if (strncmp(str, prefix, prefix_len) != 0)
+    return -1;
+
+  // Ensure remaining characters are digits
+  const char *number_part = str + prefix_len;
+  for (const char *p = number_part; *p != '\0'; ++p)
+  {
+    if (!isdigit((unsigned char)*p))
+      return -1;
+  }
+
+  return atoi(number_part);
+}
+
 BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 {
   if (isTag(rval, "String"))
@@ -551,8 +571,18 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   }
   else if (isTag(rval, "EnvBinding"))
   {
-    int refIDX = getFlagNumber(rval, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_get_loc_check, refIDX);
+    // If this is an arg, get the arg idx
+    if (hasFlag(rval, "JSARG"))
+    {
+      int argIdx = parse_arg_index(getFlagString(rval->args[0], "IridiumPrimitive"));
+      assert(argIdx > -1);
+      return pushOP16(ctx, currTarget, OP_get_arg, argIdx);
+    }
+    else
+    {
+      int refIDX = getFlagNumber(rval, "REFIDX");
+      return pushOP16(ctx, currTarget, OP_get_loc_check, refIDX);
+    }
   }
   else if (isTag(rval, "GlobalBinding"))
   {
@@ -771,6 +801,20 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = push8(ctx, currTarget, 0);
     }
 
+    // Define methods on the prototype
+    IridiumSEXP *methodList = rval->args[3];
+    for (int i = 0; i < methodList->numArgs; ++i) {
+      IridiumSEXP *methodName = methodList->args[i]->args[0];
+      IridiumSEXP *methodLambda = methodList->args[i]->args[1];
+      ensureTag(methodName, "String");
+
+      currTarget = lowerToStack(ctx, currTarget, methodLambda);
+
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+      currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
+      currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
+    }
+
     return pushOP(ctx, currTarget, OP_drop);
   }
   else if (isTag(rval, "JSArray"))
@@ -780,6 +824,33 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
     }
     return pushOP16(ctx, currTarget, OP_array_from, rval->numArgs);
+  }
+  else if (isTag(rval, "Private"))
+  {
+    char *data = getFlagString(rval, "IridiumPrimitive");
+    JSAtom strAtom = JS_NewAtom(ctx, data);
+    return pushOP32(ctx, currTarget, OP_private_symbol, strAtom);
+  }
+  else if (isTag(rval, "JSPrivateFieldRead"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+    return pushOP(ctx, currTarget, OP_get_private_field);
+  }
+  else if (isTag(rval, "JSSuperFieldRead"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+    return pushOP(ctx, currTarget, OP_get_super_value);
+  }
+  else if (isTag(rval, "JSSuperFieldWrite"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[3]);
+    return pushOP(ctx, currTarget, OP_put_super_value);
   }
   else
   {
@@ -919,7 +990,23 @@ BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currSt
 
 BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
 {
-  if (isTag(currStmt, "EnvWrite"))
+  if (isTag(currStmt, "FieldWrite"))
+  {
+    // Receiver
+    IridiumSEXP *receiver = currStmt->args[0];
+    currTarget = lowerToStack(ctx, currTarget, receiver);
+
+    // Rval
+    IridiumSEXP *valToPush = currStmt->args[2];
+    currTarget = lowerToStack(ctx, currTarget, valToPush);
+
+    // Field
+    IridiumSEXP *field = currStmt->args[1];
+    ensureTag(field, "String");
+    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+    currTarget = pushOP32(ctx, currTarget, OP_put_field, fieldAtom);
+  }
+  else if (isTag(currStmt, "EnvWrite"))
   {
     return handleEnvWrite(ctx, currTarget, currStmt);
   }
@@ -1016,6 +1103,28 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     ensureTag(targetBinding, "EnvBinding");
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
+  else if (isTag(currStmt, "JSPrivateFieldWrite"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
+    return pushOP(ctx, currTarget, OP_define_private_field);
+  }
+  else if (isTag(currStmt, "JSClassMethodDefine"))
+  {
+    IridiumSEXP *where = currStmt->args[0];
+    currTarget = lowerToStack(ctx, currTarget, where);
+
+    IridiumSEXP *what = currStmt->args[2];
+    currTarget = lowerToStack(ctx, currTarget, what);
+
+    IridiumSEXP *field = currStmt->args[1];
+    ensureTag(field, "String");
+    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+    currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
+    uint8_t op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
+    return push8(ctx, currTarget, op_flag);
   }
   else
   {
@@ -1609,8 +1718,8 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   b->byte_code_len = byte_code_len;
 
   // Metadata
-  b->func_name = JS_NewAtom(ctx, "<Iridium>");
-  b->filename = JS_NewAtom(ctx, "<Iridium-file>");
+  b->func_name = JS_ATOM_NULL;
+  b->filename = JS_ATOM_NULL;
   b->line_num = 1;
   b->col_num = 1;
 
@@ -1750,6 +1859,13 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
     b->super_allowed = 1;
     b->need_home_object = 1;
     b->is_derived_class_constructor = 1;
+  }
+
+  // Set Flags for class method
+  if (hasFlag(bbContainer, "SAllowed"))
+  {
+    b->super_allowed = 1;
+    b->need_home_object = 1;
   }
 
   // Register with GC
