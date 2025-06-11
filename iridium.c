@@ -592,17 +592,27 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     else
       return pushOP32(ctx, currTarget, OP_get_var, JS_NewAtom(ctx, getFlagString(rval->args[0], "IridiumPrimitive")));
   }
-  else if (isTag(rval, "CallSiteSEXP"))
+  else if (isTag(rval, "CallSite"))
   {
     int i = 0;
 
-    // Handle Constructor Call Context
+    // Handle Constructor Call Context, the class object is duplicated on the stack
     if (hasFlag(rval, "ConstructorCall"))
     {
       assert(rval->numArgs >= 1);
       currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
       currTarget = pushOP(ctx, currTarget, OP_dup);
       i = 1;
+    }
+
+    // Private Call needs to be behind a brand check
+    if (hasFlag(rval, "PrivateCall"))
+    {
+      assert(rval->numArgs >= 2);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = pushOP(ctx, currTarget, OP_check_brand); // Ensure the function's home object's brand matches the brand of the current instance current instance.
+      i = 2;
     }
 
     // Lower Arguments
@@ -621,6 +631,10 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       return pushOP16(ctx, currTarget, OP_call_constructor, rval->numArgs - 1);
     }
     else if (hasFlag(rval, "CCall"))
+    {
+      return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs - 2);
+    }
+    else if (hasFlag(rval, "PrivateCall"))
     {
       return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs - 2);
     }
@@ -801,18 +815,70 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = push8(ctx, currTarget, 0);
     }
 
+    // if (hasFlag(rval, "Derived"))
+    // {
+      // Set home object for classPropInitClosure 
+      IridiumSEXP *classPropInitClos = rval->args[3];
+      currTarget = lowerToStack(ctx, currTarget, classPropInitClos);
+      currTarget = pushOP(ctx, currTarget, OP_set_home_object);
+      currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drops the closure, not the prototype: set does not pop
+    // }
+
     // Define methods on the prototype
-    IridiumSEXP *methodList = rval->args[3];
+    IridiumSEXP *methodList = rval->args[4];
     for (int i = 0; i < methodList->numArgs; ++i) {
       IridiumSEXP *methodName = methodList->args[i]->args[0];
       IridiumSEXP *methodLambda = methodList->args[i]->args[1];
-      ensureTag(methodName, "String");
+      
+      if (isTag(methodName, "String"))
+      {
+        // Lower the method on the stack
+        currTarget = lowerToStack(ctx, currTarget, methodLambda);
 
-      currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        // Get the method name atom
+        ensureTag(methodName, "String");
+        JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+        
+        // Define method on the prototype
+        currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
+        currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
+      }
+      else if (isTag(methodName, "EnvRead"))      
+      {
+        // Lower the computed name of the function on stack
+        currTarget = lowerToStack(ctx, currTarget, methodName);
 
-      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-      currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
-      currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
+        // Lower the closure on the stack
+        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+
+        // Define method on the prototype
+        currTarget = pushOP(ctx, currTarget, OP_define_method_computed);
+        currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
+      }
+      else if (isTag(methodName, "Private"))
+      {
+        // Get the lambda on the stack
+        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+
+        // Set name
+        JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+        currTarget = pushOP32(ctx, currTarget, OP_set_name, privateMethodNameAtom);
+
+        // Set home to be the prototype
+        currTarget = pushOP(ctx, currTarget, OP_set_home_object); // sets the home to the prototype
+
+        currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drop the closure from stack
+      }
+    }
+
+    // BrandPrototype
+
+    if (hasFlag(rval, "BrandPrototype"))
+    {
+      currTarget = pushOP(ctx, currTarget, OP_dup);
+      currTarget = pushOP(ctx, currTarget, OP_null);
+      currTarget = pushOP(ctx, currTarget, OP_swap);
+      currTarget = pushOP(ctx, currTarget, OP_add_brand);
     }
 
     return pushOP(ctx, currTarget, OP_drop);
@@ -1010,6 +1076,12 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     return handleEnvWrite(ctx, currTarget, currStmt);
   }
+  else if (isTag(currStmt, "JSADDBRAND"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
+    return pushOP(ctx, currTarget, OP_add_brand);
+  }
   else if (isTag(currStmt, "JSComputedFieldWrite"))
   {
     IridiumSEXP *receiver = currStmt->args[0];
@@ -1073,7 +1145,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     int refIdx = getFlagNumber(thisLoc, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
-  else if (isTag(currStmt, "CallSiteSEXP"))
+  else if (isTag(currStmt, "CallSite"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt);
     return pushOP(ctx, currTarget, OP_drop);
@@ -1099,6 +1171,14 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     currTarget = pushOP8(ctx, currTarget, OP_special_object, 2);
     currTarget = pushOP(ctx, currTarget, OP_get_super);
+    IridiumSEXP *targetBinding = currStmt->args[0];
+    ensureTag(targetBinding, "EnvBinding");
+    int refIdx = getFlagNumber(targetBinding, "REFIDX");
+    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
+  else if (isTag(currStmt, "JSHOMEOBJ"))
+  {
+    currTarget = pushOP8(ctx, currTarget, OP_special_object, 4);
     IridiumSEXP *targetBinding = currStmt->args[0];
     ensureTag(targetBinding, "EnvBinding");
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
@@ -1302,6 +1382,14 @@ void populateBytecode(uint8_t *target, BCLList *currBC, int poolIDX)
   if (currBC->bc == OP_define_method || currBC->bc == OP_define_class)
   {
     uint8_t *t = (uint8_t *)(target + 5); // {0: OP} {atom: 1 2 3 4} {flag: 5}
+    // Next slot is the op_flag
+    *t = currBC->next->bc;
+    return populateBytecode(target + short_opcode_info(currBC->bc).size, currBC->next->next, poolIDX);
+  }
+
+  if (currBC->bc == OP_define_method_computed)
+  {
+    uint8_t *t = (uint8_t *)(target + 2); // {0: OP} {flag: 1}
     // Next slot is the op_flag
     *t = currBC->next->bc;
     return populateBytecode(target + short_opcode_info(currBC->bc).size, currBC->next->next, poolIDX);
