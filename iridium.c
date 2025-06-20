@@ -815,14 +815,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = push8(ctx, currTarget, 0);
     }
 
-    // if (hasFlag(rval, "Derived"))
-    // {
-      // Set home object for classPropInitClosure 
-      IridiumSEXP *classPropInitClos = rval->args[3];
-      currTarget = lowerToStack(ctx, currTarget, classPropInitClos);
-      currTarget = pushOP(ctx, currTarget, OP_set_home_object);
-      currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drops the closure, not the prototype: set does not pop
-    // }
+    // Set home object for classPropInitClosure 
+    IridiumSEXP *classPropInitClos = rval->args[3];
+    currTarget = lowerToStack(ctx, currTarget, classPropInitClos);
+    currTarget = pushOP(ctx, currTarget, OP_set_home_object);
+    currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drops the closure, not the prototype: set does not pop
 
     // Define methods on the prototype
     IridiumSEXP *methodList = rval->args[4];
@@ -871,8 +868,56 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       }
     }
 
-    // BrandPrototype
+    // Define methods on the constructor
+    currTarget = pushOP(ctx, currTarget, OP_swap); // ctr proto -> proto ctr
+    IridiumSEXP *staticMethodList = rval->args[5];
+    for (int i = 0; i < staticMethodList->numArgs; ++i) {
+      IridiumSEXP *methodName = staticMethodList->args[i]->args[0];
+      IridiumSEXP *methodLambda = staticMethodList->args[i]->args[1];
+      
+      if (isTag(methodName, "String"))
+      {
+        // Lower the method on the stack
+        currTarget = lowerToStack(ctx, currTarget, methodLambda);
 
+        // Get the method name atom
+        ensureTag(methodName, "String");
+        JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+        
+        // Define method on the prototype
+        currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
+        currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
+      }
+      else if (isTag(methodName, "EnvRead"))      
+      {
+        // Lower the computed name of the function on stack
+        currTarget = lowerToStack(ctx, currTarget, methodName);
+
+        // Lower the closure on the stack
+        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+
+        // Define method on the prototype
+        currTarget = pushOP(ctx, currTarget, OP_define_method_computed);
+        currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
+      }
+      else if (isTag(methodName, "Private"))
+      {
+        // Get the lambda on the stack
+        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+
+        // Set name
+        JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+        currTarget = pushOP32(ctx, currTarget, OP_set_name, privateMethodNameAtom);
+
+        // Set home to be the prototype
+        currTarget = pushOP(ctx, currTarget, OP_set_home_object); // sets the home to the prototype
+
+        currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drop the closure from stack
+      }
+    }
+    currTarget = pushOP(ctx, currTarget, OP_swap); // proto ctr -> ctr proto
+
+    // BrandPrototype
     if (hasFlag(rval, "BrandPrototype"))
     {
       currTarget = pushOP(ctx, currTarget, OP_dup);
@@ -881,7 +926,25 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = pushOP(ctx, currTarget, OP_add_brand);
     }
 
-    return pushOP(ctx, currTarget, OP_drop);
+    currTarget = pushOP(ctx, currTarget, OP_drop);
+
+    // BrandPrototype
+    if (hasFlag(rval, "BrandConstructor"))
+    {
+      currTarget = pushOP(ctx, currTarget, OP_dup);
+      currTarget = pushOP(ctx, currTarget, OP_dup);
+      currTarget = pushOP(ctx, currTarget, OP_add_brand);
+    }
+
+    // Static Prop Init
+    IridiumSEXP *staticPropInitClosure = rval->args[6];
+    currTarget = pushOP(ctx, currTarget, OP_dup);
+    currTarget = lowerToStack(ctx, currTarget, staticPropInitClosure);
+    currTarget = pushOP(ctx, currTarget, OP_set_home_object);
+    currTarget = pushOP16(ctx, currTarget, OP_call_method, 0);
+    currTarget = pushOP(ctx, currTarget, OP_drop);
+
+    return currTarget;
   }
   else if (isTag(rval, "JSArray"))
   {
@@ -1931,29 +1994,37 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
     }
   }
 
-  // Set Flags for constructor
-  if (hasFlag(bbContainer, "Constructor"))
+  printf("ADDR: %p\n", b);
+
+  // Set special flags
+  if (hasFlag(bbContainer, "PROTO"))
   {
     b->has_prototype = 1;
+  }
+
+  if (hasFlag(bbContainer, "NEW"))
+  {
     b->new_target_allowed = 1;
   }
 
-  // Set Flags for constructor with heritage
-  if (hasFlag(bbContainer, "SConstructor"))
+  if (hasFlag(bbContainer, "SCALL"))
   {
-    b->has_prototype = 1;
-    b->new_target_allowed = 1;
     b->super_call_allowed = 1;
-    b->super_allowed = 1;
-    b->need_home_object = 1;
-    b->is_derived_class_constructor = 1;
   }
 
-  // Set Flags for class method
-  if (hasFlag(bbContainer, "SAllowed"))
+  if (hasFlag(bbContainer, "SOBJ"))
   {
     b->super_allowed = 1;
+  }
+
+  if (hasFlag(bbContainer, "HOME"))
+  {
     b->need_home_object = 1;
+  }
+
+  if (hasFlag(bbContainer, "DERIVED"))
+  {
+    b->is_derived_class_constructor = 1;
   }
 
   // Register with GC
