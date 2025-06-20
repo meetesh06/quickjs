@@ -684,6 +684,12 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
       return pushOP(ctx, currTarget, OP_strict_eq);
     }
+    else if (strcmp(op, "<") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_lt);
+    }
     else
     {
       fprintf(stderr, "TODO: binop %s\n", op);
