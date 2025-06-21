@@ -554,6 +554,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     JSAtom strAtom = JS_NewAtom(ctx, data);
     return pushOP32(ctx, currTarget, OP_push_atom_value, strAtom);
   }
+  else if (isTag(rval, "JSToForInIterator"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    return pushOP(ctx, currTarget, OP_for_in_start);
+  }
   else if (isTag(rval, "Number"))
   {
     int data = getFlagNumber(rval, "IridiumPrimitive");
@@ -1140,6 +1145,23 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     ensureTag(field, "String");
     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
     currTarget = pushOP32(ctx, currTarget, OP_put_field, fieldAtom);
+  }
+  else if (isTag(currStmt, "JSForInNext"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = pushOP(ctx, currTarget, OP_for_in_next);
+
+    IridiumSEXP *doneTarget = currStmt->args[1];
+    assert(isTag(doneTarget, "EnvBinding"));
+    int doneTargetIDX = getFlagNumber(doneTarget, "REFIDX");
+
+    IridiumSEXP *nextValTarget = currStmt->args[2];
+    assert(isTag(nextValTarget, "EnvBinding"));
+    int nextValTargetIDX = getFlagNumber(nextValTarget, "REFIDX");
+
+    currTarget = pushOP16(ctx, currTarget, OP_put_loc, doneTargetIDX);
+    currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX);
+    return pushOP(ctx, currTarget, OP_drop);
   }
   else if (isTag(currStmt, "EnvWrite"))
   {
