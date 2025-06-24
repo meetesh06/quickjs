@@ -1163,6 +1163,50 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX);
     return pushOP(ctx, currTarget, OP_drop);
   }
+  else if (isTag(currStmt, "JSForOfStart"))
+  {
+    // Push obj onto the stack
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    
+    // obj -> enum_obj iterator_method catch_offset
+    currTarget = pushOP(ctx, currTarget, OP_for_of_start);
+
+    // Store <for-of-loop-catchoffset> = catch_offset
+    // Store <for-of-loop-method> = iterator_method
+    // Store <for-of-loop-iterator> = enum_obj
+    assert(currStmt->numArgs == 4);
+    for (int i = 1; i < currStmt->numArgs; i++) {
+      IridiumSEXP *stackLocation = currStmt->args[i];
+      assert(isTag(stackLocation, "EnvBinding"));
+      int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc, stackLocationIDX);
+    }
+  }
+  else if (isTag(currStmt, "JSForOfNext"))
+  {
+    // [] -> [obj_iter obj_meth catchOffset]
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
+
+    // [obj_iter obj_meth catchOffset] -> [obj_iter obj_meth catchOffset result done]
+    currTarget = pushOP16(ctx, currTarget, OP_for_of_next, 0);
+    
+    // Store <for-of-loop-done> = done
+    // Store <for-of-loop-next> = result
+    assert(currStmt->numArgs == 5);
+    for (int i = 3; i < currStmt->numArgs; i++) {
+      IridiumSEXP *stackLocation = currStmt->args[i];
+      assert(isTag(stackLocation, "EnvBinding"));
+      int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc, stackLocationIDX);
+    }
+
+    // [obj_iter obj_meth catchOffset] -> []
+    currTarget = pushOP(ctx, currTarget, OP_drop);
+    currTarget = pushOP(ctx, currTarget, OP_drop);
+    currTarget = pushOP(ctx, currTarget, OP_drop);
+  }
   else if (isTag(currStmt, "EnvWrite"))
   {
     return handleEnvWrite(ctx, currTarget, currStmt);
