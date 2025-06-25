@@ -1,4 +1,6 @@
-# ⚡️ QuickJS - A mighty JavaScript engine
+# ⚡️ QuickJS + Iridium - A mighty JavaScript engine
+
+This fork adds support for the Iridium optimizing frontend into quickjs.
 
 ## Overview
 
