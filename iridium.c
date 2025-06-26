@@ -1235,6 +1235,16 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     return pushOP(ctx, currTarget, OP_check_ctor);
   }
+  else if (isTag(currStmt, "IfJump"))
+  {
+    // Push check to stack
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+
+    // Jmp to TRUE if stack value is true
+    currTarget = pushOP32(ctx, currTarget, OP_if_true, getFlagNumber(currStmt, "IDX"));
+
+    return currTarget;
+  }
   else if (isTag(currStmt, "IfElseJump"))
   {
     // Push check to stack
