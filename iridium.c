@@ -987,6 +987,10 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = lowerToStack(ctx, currTarget, rval->args[3]);
     return pushOP(ctx, currTarget, OP_put_super_value);
   }
+  else if (isTag(rval, "Null"))
+  {
+    return pushOP(ctx, currTarget, OP_null);
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1330,6 +1334,21 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
+  else if (isTag(currStmt, "JSToObject"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = pushOP(ctx, currTarget, OP_to_object);
+
+    IridiumSEXP *stackLocation = currStmt->args[1];
+    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    if (isTag(stackLocation, "EnvBinding")) {
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+    } else {
+      fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+    }
+  }
   else if (isTag(currStmt, "JSPrivateFieldWrite"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
@@ -1351,6 +1370,36 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
     uint8_t op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
     return push8(ctx, currTarget, op_flag);
+  }
+  else if (isTag(currStmt, "JSCopyDataProperties"))
+  {
+    // exc_obj
+    IridiumSEXP *exc_obj = currStmt->args[0];
+    currTarget = lowerToStack(ctx, currTarget, exc_obj);
+
+    // source
+    IridiumSEXP *source = currStmt->args[1];
+    currTarget = lowerToStack(ctx, currTarget, source);
+
+    // target
+    IridiumSEXP *target = currStmt->args[2];
+    currTarget = lowerToStack(ctx, currTarget, target);
+
+    // OP_copy_data_properties
+    currTarget = pushOP16(ctx, currTarget, OP_copy_data_properties, 68);
+
+    IridiumSEXP *stackLocation = currStmt->args[3];
+    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    if (isTag(stackLocation, "EnvBinding")) {
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+    } else {
+      fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+    }
+
+    currTarget = pushOP(ctx, currTarget, OP_drop);
+    return pushOP(ctx, currTarget, OP_drop);
   }
   else
   {
