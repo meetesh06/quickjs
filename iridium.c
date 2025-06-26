@@ -554,11 +554,6 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     JSAtom strAtom = JS_NewAtom(ctx, data);
     return pushOP32(ctx, currTarget, OP_push_atom_value, strAtom);
   }
-  else if (isTag(rval, "JSToForInIterator"))
-  {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    return pushOP(ctx, currTarget, OP_for_in_start);
-  }
   else if (isTag(rval, "Number"))
   {
     int data = getFlagNumber(rval, "IridiumPrimitive");
@@ -1163,23 +1158,29 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX);
     return pushOP(ctx, currTarget, OP_drop);
   }
-  else if (isTag(currStmt, "JSForOfStart"))
+  else if (isTag(currStmt, "JSForOfStart") || isTag(currStmt, "JSForInStart"))
   {
     // Push obj onto the stack
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     
-    // obj -> enum_obj iterator_method catch_offset
-    currTarget = pushOP(ctx, currTarget, OP_for_of_start);
+    if (isTag(currStmt, "JSForOfStart")) {
+      // obj -> enum_obj iterator_method catch_offset
+      currTarget = pushOP(ctx, currTarget, OP_for_of_start);
+    } else {
+      // obj -> enum_obj
+      currTarget = pushOP(ctx, currTarget, OP_for_in_start);
+    }
 
-    // Store <for-of-loop-catchoffset> = catch_offset
-    // Store <for-of-loop-method> = iterator_method
-    // Store <for-of-loop-iterator> = enum_obj
-    assert(currStmt->numArgs == 4);
     for (int i = 1; i < currStmt->numArgs; i++) {
       IridiumSEXP *stackLocation = currStmt->args[i];
-      assert(isTag(stackLocation, "EnvBinding"));
       int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc, stackLocationIDX);
+      if (isTag(stackLocation, "EnvBinding")) {
+        currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+      } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+      } else {
+        fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+      }
     }
   }
   else if (isTag(currStmt, "JSForOfNext"))
