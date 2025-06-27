@@ -991,6 +991,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     return pushOP(ctx, currTarget, OP_null);
   }
+  else if (isTag(rval, "Yield"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    return pushOP(ctx, currTarget, OP_yield);
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1355,6 +1360,10 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
     return pushOP(ctx, currTarget, OP_define_private_field);
+  }
+  else if (isTag(currStmt, "JSInitialYield"))
+  {
+    return pushOP(ctx, currTarget, OP_initial_yield);
   }
   else if (isTag(currStmt, "JSClassMethodDefine"))
   {
@@ -2127,6 +2136,15 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   }
 
   printf("ADDR: %p\n", b);
+
+  // Set fun kind
+  if (hasFlag(bbContainer, "GENERATOR") && hasFlag(bbContainer, "ASYNC")) {
+    b->func_kind = JS_FUNC_ASYNC_GENERATOR;
+  } else if (hasFlag(bbContainer, "GENERATOR")) {
+    b->func_kind = JS_FUNC_GENERATOR;
+  } else if (hasFlag(bbContainer, "ASYNC")) {
+    b->func_kind = JS_FUNC_ASYNC;
+  }
 
   // Set special flags
   if (hasFlag(bbContainer, "PROTO"))
