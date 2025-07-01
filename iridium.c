@@ -663,6 +663,15 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       return pushOP(ctx, currTarget, OP_push_false);
     }
   }
+  else if (isTag(rval, "Unop"))
+  {
+    char *op = getFlagString(rval->args[0], "IridiumPrimitive");
+    if (strcmp(op, "!") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      return pushOP(ctx, currTarget, OP_neg);
+    }
+  }
   else if (isTag(rval, "Binop"))
   {
     char *op = getFlagString(rval->args[0], "IridiumPrimitive");
@@ -1241,9 +1250,21 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     return pushOP(ctx, currTarget, OP_put_array_el); // obj prop val
   }
+  else if (isTag(currStmt, "Throw"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    return pushOP(ctx, currTarget, OP_throw);
+  }
   else if (isTag(currStmt, "JSCheckConstructor"))
   {
     return pushOP(ctx, currTarget, OP_check_ctor);
+  }
+  else if (isTag(currStmt, "JSCatchContext"))
+  {
+    IridiumSEXP *loc = currStmt->args[0];
+    ensureTag(loc, "EnvBinding");
+    int refIdx = getFlagNumber(loc, "REFIDX");
+    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
   else if (isTag(currStmt, "IfJump"))
   {
@@ -1279,9 +1300,21 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = pushOP(ctx, currTarget, OP_undefined);
     return pushOP(ctx, currTarget, OP_return_async);
   }
+  else if (isTag(currStmt, "InvokeFinalizer"))
+  {
+    return pushOP32(ctx, currTarget, OP_gosub, getFlagNumber(currStmt, "IDX"));
+  }
   else if (isTag(currStmt, "Goto"))
   {
     return pushOP32(ctx, currTarget, OP_goto, getFlagNumber(currStmt, "IDX"));
+  }
+  else if (isTag(currStmt, "PushCatchContext"))
+  {
+    return pushOP32(ctx, currTarget, OP_catch, getFlagNumber(currStmt, "IDX"));
+  }
+  else if (isTag(currStmt, "PopCatchContext"))
+  {
+    return pushOP(ctx, currTarget, OP_drop);
   }
   else if (isTag(currStmt, "Return"))
   {
@@ -1410,6 +1443,17 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = pushOP(ctx, currTarget, OP_drop);
     return pushOP(ctx, currTarget, OP_drop);
   }
+  else if (isTag(currStmt, "JSIteratorClose"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
+    return pushOP(ctx, currTarget, OP_iterator_close);
+  }
+  else if (isTag(currStmt, "Ret"))
+  {
+    return pushOP(ctx, currTarget, OP_ret);
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
@@ -1526,7 +1570,7 @@ void patchGotos(BCLList *bcList, int currOffset, BCLList *startBcList)
 {
   if (bcList)
   {
-    if (bcList->bc == OP_goto)
+    if (bcList->bc == OP_goto || bcList->bc == OP_catch || bcList->bc == OP_gosub)
     {
       uint32_t iriOffset = bcList->data.four;
       int actualOffset = findOffset(startBcList, 0, iriOffset);
