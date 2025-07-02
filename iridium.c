@@ -669,7 +669,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     if (strcmp(op, "!") == 0)
     {
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      return pushOP(ctx, currTarget, OP_neg);
+      return pushOP(ctx, currTarget, OP_lnot);
     }
   }
   else if (isTag(rval, "Binop"))
@@ -1172,59 +1172,73 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     assert(isTag(nextValTarget, "EnvBinding"));
     int nextValTargetIDX = getFlagNumber(nextValTarget, "REFIDX");
 
-    currTarget = pushOP16(ctx, currTarget, OP_put_loc, doneTargetIDX);
-    currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX);
-    return pushOP(ctx, currTarget, OP_drop);
+    currTarget = pushOP16(ctx, currTarget, OP_put_loc, doneTargetIDX); // top of the stack contains <loop-done>
+    currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX); // top - 1 of the stack contains <loop-next>
+    return pushOP(ctx, currTarget, OP_drop); // drop enum_obj
   }
-  else if (isTag(currStmt, "JSForOfStart") || isTag(currStmt, "JSForInStart"))
+  else if (isTag(currStmt, "JSForOfStart"))
+  {
+    // Push obj onto the stack
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+
+    // obj -> enum_obj iterator_method catch_offset
+    return pushOP(ctx, currTarget, OP_for_of_start);
+
+    // currTarget = pushOP(ctx, currTarget, OP_swap);
+
+    // IridiumSEXP *methodStackLocation = currStmt->args[1];
+    // int methodStackLocationIDX = getFlagNumber(methodStackLocation, "REFIDX");
+    // if (isTag(methodStackLocation, "EnvBinding")) {
+    //   currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, methodStackLocationIDX);
+    // } else if (isTag(methodStackLocation, "RemoteEnvBinding")) {
+    //   currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, methodStackLocationIDX);
+    // } else {
+    //   fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+    // }
+
+    // currTarget = pushOP(ctx, currTarget, OP_swap);
+
+    // IridiumSEXP *methodItLocation = currStmt->args[2];
+    // int methodItLocationIDX = getFlagNumber(methodItLocation, "REFIDX");
+    // if (isTag(methodItLocation, "EnvBinding")) {
+    //   currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, methodItLocationIDX);
+    // } else if (isTag(methodItLocation, "RemoteEnvBinding")) {
+    //   currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, methodItLocationIDX);
+    // } else {
+    //   fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+    // }
+  }
+  else if (isTag(currStmt, "JSForInStart"))
   {
     // Push obj onto the stack
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     
-    if (isTag(currStmt, "JSForOfStart")) {
-      // obj -> enum_obj iterator_method catch_offset
-      currTarget = pushOP(ctx, currTarget, OP_for_of_start);
+    // obj -> enum_obj
+    currTarget = pushOP(ctx, currTarget, OP_for_in_start);
+    IridiumSEXP *stackLocation = currStmt->args[0];
+    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    if (isTag(stackLocation, "EnvBinding")) {
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
     } else {
-      // obj -> enum_obj
-      currTarget = pushOP(ctx, currTarget, OP_for_in_start);
-    }
-
-    for (int i = 1; i < currStmt->numArgs; i++) {
-      IridiumSEXP *stackLocation = currStmt->args[i];
-      int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-      if (isTag(stackLocation, "EnvBinding")) {
-        currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-      } else if (isTag(stackLocation, "RemoteEnvBinding")) {
-        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-      } else {
-        fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-      }
+      fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
     }
   }
   else if (isTag(currStmt, "JSForOfNext"))
-  {
-    // [] -> [obj_iter obj_meth catchOffset]
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
-
-    // [obj_iter obj_meth catchOffset] -> [obj_iter obj_meth catchOffset result done]
+  {    
+    // [it, meth, off] -> [it, meth, off, result, done]
     currTarget = pushOP16(ctx, currTarget, OP_for_of_next, 0);
     
     // Store <for-of-loop-done> = done
     // Store <for-of-loop-next> = result
-    assert(currStmt->numArgs == 5);
-    for (int i = 3; i < currStmt->numArgs; i++) {
+    assert(currStmt->numArgs == 2);
+    for (int i = 0; i < currStmt->numArgs; i++) {
       IridiumSEXP *stackLocation = currStmt->args[i];
       assert(isTag(stackLocation, "EnvBinding"));
       int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
       currTarget = pushOP16(ctx, currTarget, OP_put_loc, stackLocationIDX);
     }
-
-    // [obj_iter obj_meth catchOffset] -> []
-    currTarget = pushOP(ctx, currTarget, OP_drop);
-    currTarget = pushOP(ctx, currTarget, OP_drop);
-    currTarget = pushOP(ctx, currTarget, OP_drop);
   }
   else if (isTag(currStmt, "EnvWrite"))
   {
@@ -1265,6 +1279,10 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     ensureTag(loc, "EnvBinding");
     int refIdx = getFlagNumber(loc, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
+  else if (isTag(currStmt, "PushForOfCatchContext"))
+  {
+    return lowerToStack(ctx, currTarget, currStmt->args[0]);
   }
   else if (isTag(currStmt, "IfJump"))
   {
@@ -1445,9 +1463,6 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   }
   else if (isTag(currStmt, "JSIteratorClose"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
     return pushOP(ctx, currTarget, OP_iterator_close);
   }
   else if (isTag(currStmt, "Ret"))
@@ -1772,7 +1787,7 @@ int compute_stack_size(JSContext *ctx, uint8_t *bc_buf, int bcSize)
     oi = &short_opcode_info(op);
     // #ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_STACK
     //         if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_STACK))
-    // printf("%5d: %10s %5d %5d\n", pos, oi->name, stack_len, catch_pos);
+    printf("%5d: %10s %5d %5d\n", pos, oi->name, stack_len, catch_pos);
     // #endif
     pos_next = pos + oi->size;
     if (pos_next > s->bc_len)
