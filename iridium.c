@@ -1235,9 +1235,14 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     assert(currStmt->numArgs == 2);
     for (int i = 0; i < currStmt->numArgs; i++) {
       IridiumSEXP *stackLocation = currStmt->args[i];
-      assert(isTag(stackLocation, "EnvBinding"));
       int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc, stackLocationIDX);
+      if (isTag(stackLocation, "EnvBinding")) {
+        currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+      } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+      } else {
+        fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+      }
     }
   }
   else if (isTag(currStmt, "EnvWrite"))
