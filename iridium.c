@@ -1215,7 +1215,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     
     // obj -> enum_obj
     currTarget = pushOP(ctx, currTarget, OP_for_in_start);
-    IridiumSEXP *stackLocation = currStmt->args[0];
+    IridiumSEXP *stackLocation = currStmt->args[1];
     int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
     if (isTag(stackLocation, "EnvBinding")) {
       currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
