@@ -573,6 +573,18 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = pushOPConst(ctx, currTarget, OP_push_const, compiledRegexp);
     return pushOP(ctx, currTarget, OP_regexp);
   }
+  else if (isTag(rval, "JSTemplate"))
+  {
+    currTarget = pushOP(ctx, currTarget, OP_push_empty_string);
+    JSAtom fieldAtom = JS_NewAtom(ctx, "concat");
+    currTarget = pushOP32(ctx, currTarget, OP_get_field2, fieldAtom);
+
+    for (int i = 0; i < rval->numArgs; i++) {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
+    }
+
+    return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs);
+  }
   else if (isTag(rval, "Number"))
   {
     int data = getFlagNumber(rval, "IridiumPrimitive");
@@ -690,6 +702,31 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
       return pushOP(ctx, currTarget, OP_lnot);
     }
+    else if (strcmp(op, "-") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      return pushOP(ctx, currTarget, OP_neg);
+    }
+    else if (strcmp(op, "+") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      return pushOP(ctx, currTarget, OP_plus);
+    }
+    else if (strcmp(op, "~") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      return pushOP(ctx, currTarget, OP_not);
+    }
+    else if (strcmp(op, "typeof") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      return pushOP(ctx, currTarget, OP_typeof);
+    }
+    else
+    {
+      fprintf(stderr, "TODO: unhandled Unop: %s\n", op);
+      exit(1);
+    }
   }
   else if (isTag(rval, "Binop"))
   {
@@ -699,6 +736,72 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
       currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
       return pushOP(ctx, currTarget, OP_add);
+    }
+    else if (strcmp(op, "-") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_sub);
+    }
+    else if (strcmp(op, "/") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_div);
+    }
+    else if (strcmp(op, "%") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_mod);
+    }
+    else if (strcmp(op, "*") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_mul);
+    }
+    else if (strcmp(op, "**") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_pow);
+    }
+    else if (strcmp(op, "&") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_and);
+    }
+    else if (strcmp(op, "|") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_or);
+    }
+    else if (strcmp(op, ">>") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_sar);
+    }
+    else if (strcmp(op, ">>>") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_shr);
+    }
+    else if (strcmp(op, "<<") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_shl);
+    }
+    else if (strcmp(op, "^") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_xor);
     }
     else if (strcmp(op, "==") == 0)
     {
@@ -712,11 +815,53 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
       return pushOP(ctx, currTarget, OP_strict_eq);
     }
+    else if (strcmp(op, "!=") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_neq);
+    }
+    else if (strcmp(op, "!==") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_strict_neq);
+    }
+    else if (strcmp(op, "in") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_in);
+    }
+    else if (strcmp(op, "instanceof") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_instanceof);
+    }
+    else if (strcmp(op, ">") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_gt);
+    }
     else if (strcmp(op, "<") == 0)
     {
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
       currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
       return pushOP(ctx, currTarget, OP_lt);
+    }
+    else if (strcmp(op, ">=") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_gte);
+    }
+    else if (strcmp(op, "<=") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_lte);
     }
     else
     {
@@ -1023,6 +1168,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
     return pushOP(ctx, currTarget, OP_yield);
+  }
+  else if (isTag(rval, "Await"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    return pushOP(ctx, currTarget, OP_await);
   }
   else
   {
@@ -1362,6 +1512,11 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     return pushOP(ctx, currTarget, OP_return);
+  }
+  else if (isTag(currStmt, "ReturnAsync"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    return pushOP(ctx, currTarget, OP_return_async);
   }
   else if (isTag(currStmt, "NOP"))
   {
