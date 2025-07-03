@@ -827,6 +827,12 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
       return pushOP(ctx, currTarget, OP_strict_neq);
     }
+    else if (strcmp(op, "pin") == 0)
+    {
+      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
+      return pushOP(ctx, currTarget, OP_private_in);
+    }
     else if (strcmp(op, "in") == 0)
     {
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
