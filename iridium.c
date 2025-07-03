@@ -554,6 +554,25 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     JSAtom strAtom = JS_NewAtom(ctx, data);
     return pushOP32(ctx, currTarget, OP_push_atom_value, strAtom);
   }
+  else if (isTag(rval, "RegExp"))
+  {
+    char *exp = getFlagString(rval, "EXP");
+    char *flags = getFlagString(rval, "FLAGS");
+
+    JSValue expValue = JS_NewAtomString(ctx, exp);
+    JSValue flagsValue = JS_NewAtomString(ctx, flags);
+
+    currTarget = pushOPConst(ctx, currTarget, OP_push_const, expValue);
+
+    // Compile regexp
+    if (!ctx->compile_regexp) {
+      fprintf(stderr, "RegExp compiler not found in the context");
+      exit(1);
+    }
+    JSValue compiledRegexp = ctx->compile_regexp(ctx, expValue, flagsValue);
+    currTarget = pushOPConst(ctx, currTarget, OP_push_const, compiledRegexp);
+    return pushOP(ctx, currTarget, OP_regexp);
+  }
   else if (isTag(rval, "Number"))
   {
     int data = getFlagNumber(rval, "IridiumPrimitive");
