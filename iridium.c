@@ -2379,8 +2379,6 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
     }
   }
 
-  printf("ADDR: %p\n", b);
-
   // Set fun kind
   if (hasFlag(bbContainer, "GENERATOR") && hasFlag(bbContainer, "ASYNC")) {
     b->func_kind = JS_FUNC_ASYNC_GENERATOR;
@@ -2435,14 +2433,21 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   ensureTag(file, "File");
   ensureFlag(file, "JSModule");
 
+  // Entry 1: Module Requests
+  // Entry 2: Static Imports
+  // Entry 3: Static Exports
+  // Entry 4: Static Star Exports
+  uint8_t moduleMetaEntries = 4;
+  uint16_t numModules = node->numArgs - moduleMetaEntries;
+
   // dumpIridiumSEXP(stdout, file, 0);
 
-  JSValue *moduleList = malloc(node->numArgs * sizeof(JSValue));
+  JSValue *moduleList = malloc(numModules * sizeof(JSValue));
   int topLevelModuleIdx = -1;
 
-  for (int i = 0; i < file->numArgs; ++i)
+  for (int i = 0; i < numModules; ++i)
   {
-    IridiumSEXP *bbContainer = file->args[i];
+    IridiumSEXP *bbContainer = file->args[moduleMetaEntries + i];
     ensureTag(bbContainer, "BBContainer");
 
     bool isTopLevelModule = hasFlag(bbContainer, "TopLevel");
@@ -2489,17 +2494,15 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     // Free BCLList
     freeBCLList(ctx, startBC);
 
-    js_dump_function_bytecode(ctx, (JSFunctionBytecode *)res.u.ptr);
-
     moduleList[i] = res;
   }
 
   assert(topLevelModuleIdx >= 0);
 
   // Fill CPool with closures
-  for (int i = 0; i < file->numArgs; i++)
+  for (int i = 0; i < numModules; i++)
   {
-    IridiumSEXP *bbContainer = file->args[i];
+    IridiumSEXP *bbContainer = file->args[moduleMetaEntries + i];
     ensureTag(bbContainer, "BBContainer");
 
     IridiumSEXP *bindingsInfo = bbContainer->args[0];
@@ -2522,9 +2525,9 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       // Find the location of the target closure
       JSValue res;
       bool found = false;
-      for (int k = 0; k < file->numArgs; k++)
+      for (int k = 0; k < numModules; k++)
       {
-        IridiumSEXP *bbContainer = file->args[k];
+        IridiumSEXP *bbContainer = file->args[moduleMetaEntries + k];
         ensureTag(bbContainer, "BBContainer");
         int closureStartBBIDX = getFlagNumber(bbContainer, "StartBBIDX");
         if (closureStartBBIDX == targetStartBBIDX)
@@ -2538,6 +2541,16 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       // Patch cpool to point to this closures
       targetClosurePtr->cpool[poolStartIdx + j] = res;
     }
+  }
+
+
+  fprintf(stdout, "[Iridium] Dumping all non-topLevel module code\n");
+  for (int i = 0; i < numModules; i++)
+  {
+    if (i == topLevelModuleIdx) continue;
+    JSValue funBC = moduleList[i];
+    JSFunctionBytecode *b = (JSFunctionBytecode *) funBC.u.ptr;
+    js_dump_function_bytecode(ctx, b);
   }
 
   return moduleList[topLevelModuleIdx];
@@ -2566,10 +2579,66 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   // Generate BC
   JSValue moduleFunVal = generateBytecode(ctx, iridiumCode);
 
+  JSFunctionBytecode *b = (JSFunctionBytecode *) moduleFunVal.u.ptr;
+
   // Execute the file
   JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
+  
+  // Initialize Module
+  IridiumSEXP *moduleRequests = iridiumCode->args[0];
+  IridiumSEXP *staticImports = iridiumCode->args[1];
+
+  m->req_module_entries_count = moduleRequests->numArgs;
+  m->req_module_entries_size = m->req_module_entries_count;
+  m->req_module_entries = js_mallocz(ctx, sizeof(m->req_module_entries[0]) * m->req_module_entries_size);
+
+  // 1. Create External Module Requests
+  for (int r = 0; r < moduleRequests->numArgs; ++r) {
+    IridiumSEXP *moduleRequest = moduleRequests->args[r];
+    char * SOURCE = getFlagString(moduleRequest, "SOURCE");
+    m->req_module_entries[r].module_name = JS_NewAtom(ctx, SOURCE);
+  }
+
+  m->import_entries_count = staticImports->numArgs;
+  m->import_entries_size = m->import_entries_count;
+  m->import_entries = js_mallocz(ctx, sizeof(m->import_entries[0]) * m->import_entries_size);
+
+  // 2. Link Static Import Targets
+  for (int im = 0; im < staticImports->numArgs; ++im) {
+    IridiumSEXP *staticImport = staticImports->args[im];
+
+    // Req Module IDX
+    int reqModuleIDX = getFlagNumber(staticImport, "REQIDX");
+
+    // Target IDX
+    IridiumSEXP *bindingTarget = staticImport->args[0];
+    ensureTag(bindingTarget, "RemoteEnvBinding");
+    int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
+
+    // Field
+    IridiumSEXP *fieldToGet = staticImport->args[1];
+    ensureTag(fieldToGet, "String");
+    
+    char *fieldName = getFlagString(fieldToGet, "IridiumPrimitive");
+
+    m->import_entries[im].var_idx = bindingTargetIDX;
+    m->import_entries[im].import_name = JS_NewAtom(ctx, fieldName);
+    m->import_entries[im].req_module_idx = reqModuleIDX;
+
+    b->closure_var[bindingTargetIDX].is_local = false;
+  }
+
+  fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
+  js_dump_function_bytecode(ctx, b);
+
   m->func_obj = moduleFunVal;
   JSValue moduleVal = JS_NewModuleValue(ctx, m);
+
+  JS_ResolveModule(ctx, moduleVal);
+
+  // Initialize Module Imports and Exports
+  
+
   JSValue res = JS_EvalFunction(ctx, moduleVal);
   JS_FreeValue(ctx, res);
 
