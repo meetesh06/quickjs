@@ -2582,11 +2582,13 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   JSFunctionBytecode *b = (JSFunctionBytecode *) moduleFunVal.u.ptr;
 
   // Execute the file
-  JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
+  cJSON *absoluteFilePath = cJSON_GetObjectItem(json, "absoluteFilePath");
+  JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, cJSON_GetStringValue(absoluteFilePath)));
   
   // Initialize Module
   IridiumSEXP *moduleRequests = iridiumCode->args[0];
   IridiumSEXP *staticImports = iridiumCode->args[1];
+  IridiumSEXP *staticExports = iridiumCode->args[2];
 
   m->req_module_entries_count = moduleRequests->numArgs;
   m->req_module_entries_size = m->req_module_entries_count;
@@ -2627,6 +2629,26 @@ void eval_iri_file(JSContext *ctx, const char *filename)
 
     b->closure_var[bindingTargetIDX].is_local = false;
   }
+
+  m->export_entries_count = staticExports->numArgs;
+  m->export_entries_size = m->export_entries_count;
+  m->export_entries = js_mallocz(ctx, sizeof(m->export_entries[0]) * m->export_entries_size);
+
+  // 3. Link Exports
+  for (int ex = 0; ex < staticExports->numArgs; ++ex) {
+    IridiumSEXP *staticExport = staticExports->args[ex];
+
+    // Target IDX
+    IridiumSEXP *bindingTarget = staticExport->args[0];
+    ensureTag(bindingTarget, "RemoteEnvBinding");
+    int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
+
+    m->export_entries[ex].u.local.var_idx = bindingTargetIDX;
+    m->export_entries[ex].local_name = JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
+    m->export_entries[ex].export_name = JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
+    m->export_entries[ex].export_type = JS_EXPORT_TYPE_LOCAL;
+  }
+
 
   fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
   js_dump_function_bytecode(ctx, b);
