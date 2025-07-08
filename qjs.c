@@ -379,7 +379,7 @@ void help(void)
     printf("QuickJS-ng-super version %s\n"
            "usage: " PROG_NAME " [options] [file [args]]\n"
            "-I  --iri         Run Iridium Code\n"
-           "-P  --iri-pika         Run Iridium Pika Bundle\n"
+           "-P  --iri-pika    Run Iridium Pika Bundle\n"
            "-h  --help         list options\n"
            "-e  --eval EXPR    evaluate EXPR\n"
            "-i  --interactive  go to interactive mode\n"
