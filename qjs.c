@@ -378,8 +378,8 @@ void help(void)
 {
     printf("QuickJS-ng-super version %s\n"
            "usage: " PROG_NAME " [options] [file [args]]\n"
-           "-O  --iOpt         Optimize Iridium Code\n"
-           "-R  --iRun         Run Iridium Code\n"
+           "-I  --iri         Run Iridium Code\n"
+           "-P  --iri-pika         Run Iridium Pika Bundle\n"
            "-h  --help         list options\n"
            "-e  --eval EXPR    evaluate EXPR\n"
            "-i  --interactive  go to interactive mode\n"
@@ -515,11 +515,11 @@ int main(int argc, char **argv)
             // 
             // Iridium options
             // 
-            if (opt == 'J' || !strcmp(longopt, "iridiumOpt")) {
+            if (opt == 'I' || !strcmp(longopt, "iri")) {
                 setBit(0, &iridium_opts);
                 continue;
             }
-            if (opt == 'K' || !strcmp(longopt, "iridiumRun")) {
+            if (opt == 'P' || !strcmp(longopt, "iri-pika")) {
                 setBit(1, &iridium_opts);
                 continue;
             }
@@ -697,14 +697,10 @@ start:
             /* interactive mode */
             interactive = 1;
         } else {
-            // if (isBitSet(0, iridium_opts)) {
-            //     // Optimize Iridium code
-            //     iridium_optimize(argv[optind]);
-            // }
-
-            if (isBitSet(1, iridium_opts)) {
-                // Run Iridium code
+            if (isBitSet(0, iridium_opts)) {
                 eval_iri_file(ctx, argv[optind]);
+            } else if (isBitSet(1, iridium_opts)) {
+                eval_iri_pika(ctx, argv[optind]);
             } else {
                 const char *filename;
                 filename = argv[optind];
