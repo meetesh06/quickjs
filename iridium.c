@@ -1997,7 +1997,7 @@ int compute_stack_size(JSContext *ctx, uint8_t *bc_buf, int bcSize)
     oi = &short_opcode_info(op);
     // #ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_STACK
     //         if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_STACK))
-    printf("%5d: %10s %5d %5d\n", pos, oi->name, stack_len, catch_pos);
+    // printf("%5d: %10s %5d %5d\n", pos, oi->name, stack_len, catch_pos);
     // #endif
     pos_next = pos + oi->size;
     if (pos_next > s->bc_len)
@@ -2598,16 +2598,8 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   return moduleList[topLevelModuleIdx];
 }
 
-void eval_iri_file(JSContext *ctx, const char *filename)
+JSModuleDef * compile_iri_module(JSContext *ctx, cJSON *json)
 {
-  cJSON *json = load_json(filename);
-
-  if (json == NULL)
-  {
-    printf("Failed to load JSON.\n");
-    return;
-  }
-
   cJSON *code = cJSON_GetObjectItem(json, "iridium");
 
   if (!cJSON_IsArray(code))
@@ -2631,6 +2623,7 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   IridiumSEXP *moduleRequests = iridiumCode->args[0];
   IridiumSEXP *staticImports = iridiumCode->args[1];
   IridiumSEXP *staticExports = iridiumCode->args[2];
+  IridiumSEXP *starExports = iridiumCode->args[3];
 
   if (moduleRequests->numArgs > 0)
   {
@@ -2676,7 +2669,8 @@ void eval_iri_file(JSContext *ctx, const char *filename)
       m->import_entries[im].import_name = JS_NewAtom(ctx, fieldName);
       m->import_entries[im].req_module_idx = reqModuleIDX;
 
-      if (!hasFlag(bindingTarget, "NSIMPORT")) {
+      if (!hasFlag(bindingTarget, "NSIMPORT"))
+      {
         // This needs to be set to false if the import is not a namespace import, this is a mess!!
         b->closure_var[bindingTargetIDX].is_local = false; // <- This was the problem!!!!
       }
@@ -2706,16 +2700,45 @@ void eval_iri_file(JSContext *ctx, const char *filename)
     }
   }
 
+  if (starExports->numArgs > 0)
+  {
+    // 4. Star Exports
+    m->star_export_entries_count = starExports->numArgs;
+    m->star_export_entries_size = m->star_export_entries_count;
+    m->star_export_entries = js_mallocz(ctx, sizeof(m->star_export_entries[0]) * m->star_export_entries_size);
+
+    for (int ex = 0; ex < starExports->numArgs; ++ex)
+    {
+      IridiumSEXP *starExport = starExports->args[ex];
+      // Req IDX
+      int reqIDX = getFlagNumber(starExport, "REQIDX");
+      m->star_export_entries[ex].req_module_idx = reqIDX;
+    }
+  }
+
   fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
   js_dump_function_bytecode(ctx, b);
 
   m->func_obj = moduleFunVal;
+
+  return m;
+}
+
+void eval_iri_file(JSContext *ctx, const char *filename)
+{
+  cJSON *json = load_json(filename);
+
+  if (json == NULL)
+  {
+    printf("Failed to load JSON.\n");
+    return;
+  }
+
+  
+  JSModuleDef *m = compile_iri_module(ctx, json);
   JSValue moduleVal = JS_NewModuleValue(ctx, m);
 
   JS_ResolveModule(ctx, moduleVal);
-
-  // Initialize Module Imports and Exports
-
   JSValue res = JS_EvalFunction(ctx, moduleVal);
   JS_FreeValue(ctx, res);
 
@@ -2748,111 +2771,12 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
   {
     cJSON *json = cJSON_GetArrayItem(pika, i);
 
-    cJSON *code = cJSON_GetObjectItem(json, "iridium");
+    JSModuleDef * m = compile_iri_module(ctx, json);
 
-    if (!cJSON_IsArray(code))
+    if (i == 0)
     {
-      fprintf(stderr, "Expected the iridium key to be an array...");
-      exit(1);
-    }
-
-    IridiumSEXP *iridiumCode = parseIridiumSEXP(code);
-
-    // Generate BC
-    JSValue moduleFunVal = generateBytecode(ctx, iridiumCode);
-
-    JSFunctionBytecode *b = (JSFunctionBytecode *)moduleFunVal.u.ptr;
-
-    // Execute the file
-    cJSON *absoluteFilePath = cJSON_GetObjectItem(json, "absoluteFilePath");
-    JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, cJSON_GetStringValue(absoluteFilePath)));
-
-    // Initialize Module
-    IridiumSEXP *moduleRequests = iridiumCode->args[0];
-    IridiumSEXP *staticImports = iridiumCode->args[1];
-    IridiumSEXP *staticExports = iridiumCode->args[2];
-
-    if (moduleRequests->numArgs > 0)
-    {
-      // 1. Create External Module Requests
-      m->req_module_entries_count = moduleRequests->numArgs;
-      m->req_module_entries_size = m->req_module_entries_count;
-      m->req_module_entries = js_mallocz(ctx, sizeof(m->req_module_entries[0]) * m->req_module_entries_size);
-
-      for (int r = 0; r < moduleRequests->numArgs; ++r)
-      {
-        IridiumSEXP *moduleRequest = moduleRequests->args[r];
-        char *SOURCE = getFlagString(moduleRequest, "SOURCE");
-        m->req_module_entries[r].module_name = JS_NewAtom(ctx, SOURCE);
-      }
-    }
-
-    if (staticImports->numArgs > 0)
-    {
-      // 2. Link Static Import Targets
-      m->import_entries_count = staticImports->numArgs;
-      m->import_entries_size = m->import_entries_count;
-      m->import_entries = js_mallocz(ctx, sizeof(m->import_entries[0]) * m->import_entries_size);
-
-      for (int im = 0; im < staticImports->numArgs; ++im)
-      {
-        IridiumSEXP *staticImport = staticImports->args[im];
-
-        // Req Module IDX
-        int reqModuleIDX = getFlagNumber(staticImport, "REQIDX");
-
-        // Target IDX
-        IridiumSEXP *bindingTarget = staticImport->args[0];
-        ensureTag(bindingTarget, "RemoteEnvBinding");
-        int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
-
-        // Field
-        IridiumSEXP *fieldToGet = staticImport->args[1];
-        ensureTag(fieldToGet, "String");
-
-        char *fieldName = getFlagString(fieldToGet, "IridiumPrimitive");
-
-        m->import_entries[im].var_idx = bindingTargetIDX;
-        m->import_entries[im].import_name = JS_NewAtom(ctx, fieldName);
-        m->import_entries[im].req_module_idx = reqModuleIDX;
-
-        if (!hasFlag(bindingTarget, "NSIMPORT")) {
-          // This needs to be set to false if the import is not a namespace import, this is a mess!!
-          b->closure_var[bindingTargetIDX].is_local = false; // <- This was the problem!!!!
-        }
-      }
-    }
-
-    if (staticExports->numArgs > 0)
-    {
-      // 3. Link Exports
-      m->export_entries_count = staticExports->numArgs;
-      m->export_entries_size = m->export_entries_count;
-      m->export_entries = js_mallocz(ctx, sizeof(m->export_entries[0]) * m->export_entries_size);
-
-      for (int ex = 0; ex < staticExports->numArgs; ++ex)
-      {
-        IridiumSEXP *staticExport = staticExports->args[ex];
-
-        // Target IDX
-        IridiumSEXP *bindingTarget = staticExport->args[0];
-        ensureTag(bindingTarget, "RemoteEnvBinding");
-        int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
-
-        m->export_entries[ex].u.local.var_idx = bindingTargetIDX;
-        m->export_entries[ex].local_name = JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
-        m->export_entries[ex].export_name = JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
-        m->export_entries[ex].export_type = JS_EXPORT_TYPE_LOCAL;
-      }
-    }
-
-    fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
-    js_dump_function_bytecode(ctx, b);
-
-    m->func_obj = moduleFunVal;
-    if (i == 0) {
       mainModule = JS_NewModuleValue(ctx, m);
-    } 
+    }
   }
 
   JS_ResolveModule(ctx, mainModule);
