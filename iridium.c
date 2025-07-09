@@ -2598,7 +2598,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   return moduleList[topLevelModuleIdx];
 }
 
-JSModuleDef * compile_iri_module(JSContext *ctx, cJSON *json)
+JSModuleDef *compile_iri_module(JSContext *ctx, cJSON *json)
 {
   cJSON *code = cJSON_GetObjectItem(json, "iridium");
 
@@ -2688,15 +2688,27 @@ JSModuleDef * compile_iri_module(JSContext *ctx, cJSON *json)
     {
       IridiumSEXP *staticExport = staticExports->args[ex];
 
-      // Target IDX
-      IridiumSEXP *bindingTarget = staticExport->args[0];
-      ensureTag(bindingTarget, "RemoteEnvBinding");
-      int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
+      if (isTag(staticExport, "NamedReexport"))
+      {
+        // Module Request IDX
+        int reqIdx = getFlagNumber(staticExport, "REQIDX");
+        m->export_entries[ex].u.req_module_idx = reqIdx;
+        m->export_entries[ex].export_type = JS_EXPORT_TYPE_INDIRECT;
+        m->export_entries[ex].local_name = JS_NewAtom(ctx, "*");
+        m->export_entries[ex].export_name = JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
+      }
+      else
+      {
+        // Stack Ref IDX
+        IridiumSEXP *bindingTarget = staticExport->args[0];
+        ensureTag(bindingTarget, "RemoteEnvBinding");
+        int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
 
-      m->export_entries[ex].u.local.var_idx = bindingTargetIDX;
-      m->export_entries[ex].local_name = JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
-      m->export_entries[ex].export_name = JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
-      m->export_entries[ex].export_type = JS_EXPORT_TYPE_LOCAL;
+        m->export_entries[ex].u.local.var_idx = bindingTargetIDX;
+        m->export_entries[ex].export_type = JS_EXPORT_TYPE_LOCAL;
+        m->export_entries[ex].local_name = JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
+        m->export_entries[ex].export_name = JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
+      }
     }
   }
 
@@ -2734,7 +2746,6 @@ void eval_iri_file(JSContext *ctx, const char *filename)
     return;
   }
 
-  
   JSModuleDef *m = compile_iri_module(ctx, json);
   JSValue moduleVal = JS_NewModuleValue(ctx, m);
 
@@ -2771,7 +2782,7 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
   {
     cJSON *json = cJSON_GetArrayItem(pika, i);
 
-    JSModuleDef * m = compile_iri_module(ctx, json);
+    JSModuleDef *m = compile_iri_module(ctx, json);
 
     if (i == 0)
     {
