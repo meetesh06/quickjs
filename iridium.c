@@ -1184,6 +1184,10 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
     return pushOP(ctx, currTarget, OP_await);
   }
+  else if (isTag(rval, "Nope"))
+  {
+    return currTarget;
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -2207,6 +2211,8 @@ void dumpBCLList(JSContext *ctx, BCLList *temp)
 
 JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *startBC)
 {
+  bool isStrict = hasFlag(bbContainer, "STRICT");
+
   IridiumSEXP *bindingsSEXP = bbContainer->args[0];
   IridiumSEXP *localBindingsSEXP = bindingsSEXP->args[0];
   IridiumSEXP *remoteBindingsSEXP = bindingsSEXP->args[1];
@@ -2292,7 +2298,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   b->pc2line_len = 0;
 
   // Function flags
-  b->is_strict_mode = 1;
+  b->is_strict_mode = isStrict;
   b->has_prototype = 0;
   b->has_simple_parameter_list = 1;
   b->is_derived_class_constructor = 0;
@@ -2473,7 +2479,6 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 {
   IridiumSEXP *file = node;
   ensureTag(file, "File");
-  ensureFlag(file, "JSModule");
 
   // Entry 1: Module Requests
   // Entry 2: Static Imports
@@ -2594,11 +2599,15 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     JSFunctionBytecode *b = (JSFunctionBytecode *)funBC.u.ptr;
     js_dump_function_bytecode(ctx, b);
   }
-
   return moduleList[topLevelModuleIdx];
 }
 
-JSModuleDef *compile_iri_module(JSContext *ctx, cJSON *json)
+typedef struct IridiumLoadResult {
+  bool isModule;
+  void *ptr;
+} IridiumLoadResult;
+
+IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 {
   cJSON *code = cJSON_GetObjectItem(json, "iridium");
 
@@ -2614,6 +2623,15 @@ JSModuleDef *compile_iri_module(JSContext *ctx, cJSON *json)
   JSValue moduleFunVal = generateBytecode(ctx, iridiumCode);
 
   JSFunctionBytecode *b = (JSFunctionBytecode *)moduleFunVal.u.ptr;
+  bool isModule = hasFlag(iridiumCode, "JSModule");
+
+  if (!isModule) {
+    js_dump_function_bytecode(ctx, b);
+    return ((IridiumLoadResult){ false, b });
+  }
+
+  // Module mode code
+  b->func_kind = JS_FUNC_ASYNC;
 
   // Execute the file
   cJSON *absoluteFilePath = cJSON_GetObjectItem(json, "absoluteFilePath");
@@ -2733,7 +2751,7 @@ JSModuleDef *compile_iri_module(JSContext *ctx, cJSON *json)
 
   m->func_obj = moduleFunVal;
 
-  return m;
+  return ((IridiumLoadResult){ true, m });
 }
 
 void eval_iri_file(JSContext *ctx, const char *filename)
@@ -2746,12 +2764,18 @@ void eval_iri_file(JSContext *ctx, const char *filename)
     return;
   }
 
-  JSModuleDef *m = compile_iri_module(ctx, json);
-  JSValue moduleVal = JS_NewModuleValue(ctx, m);
+  IridiumLoadResult iriRes = compile_iri_module(ctx, json);
+  if (iriRes.isModule) {
+    JSValue moduleVal = JS_NewModuleValue(ctx, iriRes.ptr);
 
-  JS_ResolveModule(ctx, moduleVal);
-  JSValue res = JS_EvalFunction(ctx, moduleVal);
-  JS_FreeValue(ctx, res);
+    JS_ResolveModule(ctx, moduleVal);
+    JSValue res = JS_EvalFunction(ctx, moduleVal);
+    JS_FreeValue(ctx, res);
+  } else {
+    JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
+    JSValue res = JS_EvalFunction(ctx, func_val);
+    JS_FreeValue(ctx, res);
+  }
 
   cJSON_Delete(json);
 }
@@ -2774,7 +2798,7 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
     exit(1);
   }
 
-  JSValue mainModule;
+  IridiumLoadResult iriRes;
 
   int numModules = cJSON_GetArraySize(pika);
 
@@ -2782,18 +2806,26 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
   {
     cJSON *json = cJSON_GetArrayItem(pika, i);
 
-    JSModuleDef *m = compile_iri_module(ctx, json);
+    IridiumLoadResult r = compile_iri_module(ctx, json);
 
     if (i == 0)
     {
-      mainModule = JS_NewModuleValue(ctx, m);
+      iriRes = r;
+      // = JS_NewModuleValue(ctx, iriRes.ptr);
     }
   }
 
-  JS_ResolveModule(ctx, mainModule);
+  if (iriRes.isModule) {
+    JSValue moduleVal = JS_NewModuleValue(ctx, iriRes.ptr);
 
-  JSValue res = JS_EvalFunction(ctx, mainModule);
-  JS_FreeValue(ctx, res);
+    JS_ResolveModule(ctx, moduleVal);
+    JSValue res = JS_EvalFunction(ctx, moduleVal);
+    JS_FreeValue(ctx, res);
+  } else {
+    JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
+    JSValue res = JS_EvalFunction(ctx, func_val);
+    JS_FreeValue(ctx, res);
+  }
 
   cJSON_Delete(json);
 }
