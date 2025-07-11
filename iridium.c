@@ -525,7 +525,7 @@ int getFlagNull(IridiumSEXP *binding, char *flagName)
 
 // ============== Code Generation ============== //
 
-BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt);
+BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt, bool saveResToStack);
 
 int parse_arg_index(const char *str)
 {
@@ -682,7 +682,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   }
   else if (isTag(rval, "EnvWrite"))
   {
-    return handleEnvWrite(ctx, currTarget, rval);
+    return handleEnvWrite(ctx, currTarget, rval, true);
   }
   else if (isTag(rval, "Boolean"))
   {
@@ -1188,6 +1188,46 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     return currTarget;
   }
+  else if (isTag(rval, "FieldWrite"))
+  {
+    // Receiver
+    IridiumSEXP *receiver = rval->args[0];
+    currTarget = lowerToStack(ctx, currTarget, receiver);
+
+    // Rval
+    IridiumSEXP *valToPush = rval->args[2];
+    currTarget = lowerToStack(ctx, currTarget, valToPush);
+    currTarget = pushOP(ctx, currTarget, OP_dup);
+    currTarget = pushOP(ctx, currTarget, OP_rot3r);
+
+    // Field
+    IridiumSEXP *field = rval->args[1];
+    ensureTag(field, "String");
+    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+    currTarget = pushOP32(ctx, currTarget, OP_put_field, fieldAtom);
+
+    return currTarget;
+  }
+  else if (isTag(rval, "JSComputedFieldWrite"))
+  {
+    // Receiver
+    IridiumSEXP *receiver = rval->args[0];
+    currTarget = lowerToStack(ctx, currTarget, receiver);
+
+    // Field
+    IridiumSEXP *field = rval->args[1];
+    currTarget = lowerToStack(ctx, currTarget, field);
+    currTarget = pushOP(ctx, currTarget, OP_to_propkey);
+
+    // Rval
+    IridiumSEXP *assnVal = rval->args[2];
+    currTarget = lowerToStack(ctx, currTarget, assnVal);
+
+    // Receiver Field Rval -> Rval Receiver Field Rval
+    currTarget = pushOP(ctx, currTarget, OP_insert3);
+
+    currTarget = pushOP(ctx, currTarget, OP_put_array_el); // Receiver Field Rval
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1201,97 +1241,52 @@ bool isSimpleAssignment(IridiumSEXP *currStmt)
   return currStmt->numArgs == 2 && (isTag(currStmt->args[0], "EnvBinding") || isTag(currStmt->args[0], "RemoteEnvBinding"));
 }
 
-BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
+bool isGlobalAssignment(IridiumSEXP *currStmt)
+{
+  return currStmt->numArgs == 2 && isTag(currStmt->args[0], "GlobalBinding");
+}
+
+BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt, bool saveResToStack)
 {
   bool safe = getFlagBoolean(currStmt, "SAFE");
   bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-  // BINDING = VAL
-  if (isSimpleAssignment(currStmt))
+  bool isStrict = !hasFlag(currStmt, "SLOPPY");
+
+  IridiumSEXP *lval = currStmt->args[0];
+  IridiumSEXP *rval = currStmt->args[1];
+
+  // is lval global?
+  if (isTag(lval, "GlobalBinding"))
   {
-    IridiumSEXP *lval = currStmt->args[0];
-    IridiumSEXP *rval = currStmt->args[1];
-
-    // Lower RVal
-    if (isTag(rval, "EnvWrite"))
-    {
-      bool safe = getFlagBoolean(rval, "SAFE");
-      bool thisInit = getFlagBoolean(rval, "THISINIT");
-
-      IridiumSEXP *innerLVal = rval->args[0];
-      IridiumSEXP *innerRval = rval->args[1];
-      assert(!isTag(innerRval, "EnvWrite"));
-
-      // Lower and dup RVal
-      currTarget = lowerToStack(ctx, currTarget, innerRval);
-      currTarget = pushOP(ctx, currTarget, OP_dup);
-
-      // Inner LVal
-      if (thisInit)
-      {
-        // This init only happens for locals...
-        assert(isTag(innerLVal, "EnvBinding"));
-        int refIdx = getFlagNumber(innerLVal, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, OP_put_loc_check_init, refIdx);
-      }
-      else if (isTag(innerLVal, "RemoteEnvBinding"))
-      {
-        int refIdx = getFlagNumber(innerLVal, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, safe ? OP_put_var_ref : OP_put_var_ref_check, refIdx);
-      }
-      else if (isTag(innerLVal, "EnvBinding"))
-      {
-        int refIdx = getFlagNumber(innerLVal, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, safe ? OP_put_loc : OP_put_loc_check, refIdx);
-      }
-      else
-      {
-        fprintf(stderr, "TODO: Unhandled LVal kind!!");
-        exit(1);
-      }
+    IridiumSEXP *gBindingName = lval->args[0];
+    assert(isTag(gBindingName, "String"));
+    char *name = getFlagString(gBindingName, "IridiumPrimitive");
+    if (safe) {
+      currTarget = lowerToStack(ctx, currTarget, rval);
+      currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
     }
-    else if (isTag(rval, "FieldWrite"))
+    else if (isStrict)
     {
-      // Receiver
-      IridiumSEXP *receiver = rval->args[0];
-      currTarget = lowerToStack(ctx, currTarget, receiver);
-
-      // Rval
-      IridiumSEXP *valToPush = rval->args[2];
-      currTarget = lowerToStack(ctx, currTarget, valToPush);
-      currTarget = pushOP(ctx, currTarget, OP_dup);
-      currTarget = pushOP(ctx, currTarget, OP_rot3r);
-
-      // Field
-      IridiumSEXP *field = rval->args[1];
-      ensureTag(field, "String");
-      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-      currTarget = pushOP32(ctx, currTarget, OP_put_field, fieldAtom);
-    }
-
-    else if (isTag(rval, "JSComputedFieldWrite"))
-    {
-
-      IridiumSEXP *assnVal = rval->args[2];
-      currTarget = lowerToStack(ctx, currTarget, assnVal);
-
-      IridiumSEXP *receiver = rval->args[0];
-      currTarget = lowerToStack(ctx, currTarget, receiver);
-
-      IridiumSEXP *field = rval->args[1];
-      currTarget = lowerToStack(ctx, currTarget, field);
-      currTarget = pushOP(ctx, currTarget, OP_to_propkey);
-
-      currTarget = lowerToStack(ctx, currTarget, assnVal);
-
-      currTarget = pushOP(ctx, currTarget, OP_put_array_el); // obj prop val
+      currTarget = pushOP32(ctx, currTarget, OP_check_var, JS_NewAtom(ctx, name));
+      currTarget = lowerToStack(ctx, currTarget, rval);
+      if (saveResToStack)
+        currTarget = pushOP(ctx, currTarget, OP_insert2);
+      currTarget = pushOP32(ctx, currTarget, OP_put_var_strict, JS_NewAtom(ctx, name));
     }
     else
     {
-      // Lower RVal
       currTarget = lowerToStack(ctx, currTarget, rval);
+      if (saveResToStack)
+        currTarget = pushOP(ctx, currTarget, OP_dup);
+      currTarget = pushOP32(ctx, currTarget, OP_put_var, JS_NewAtom(ctx, name));
     }
+  }
+  else
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval);
+    if (saveResToStack)
+      currTarget = pushOP(ctx, currTarget, OP_dup);
 
-    // Lower LVal
     if (thisInit)
     {
       // This init only happens for locals...
@@ -1315,32 +1310,18 @@ BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currSt
       exit(1);
     }
   }
-  else
-  {
-    fprintf(stderr, "TODO: unhandled env write: %s\n", currStmt->tag);
-    exit(1);
-  }
-
   return currTarget;
 }
 
 BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
 {
-  if (isTag(currStmt, "FieldWrite"))
+  if (isTag(currStmt, "EnvWrite")) {
+    currTarget = handleEnvWrite(ctx, currTarget, currStmt, false);
+  }
+  else if (isTag(currStmt, "FieldWrite") || isTag(currStmt, "JSComputedFieldWrite"))
   {
-    // Receiver
-    IridiumSEXP *receiver = currStmt->args[0];
-    currTarget = lowerToStack(ctx, currTarget, receiver);
-
-    // Rval
-    IridiumSEXP *valToPush = currStmt->args[2];
-    currTarget = lowerToStack(ctx, currTarget, valToPush);
-
-    // Field
-    IridiumSEXP *field = currStmt->args[1];
-    ensureTag(field, "String");
-    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    currTarget = pushOP32(ctx, currTarget, OP_put_field, fieldAtom);
+    currTarget = lowerToStack(ctx, currTarget, currStmt);
+    return pushOP(ctx, currTarget, OP_drop);
   }
   else if (isTag(currStmt, "JSForInNext"))
   {
@@ -1439,29 +1420,12 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       }
     }
   }
-  else if (isTag(currStmt, "EnvWrite"))
-  {
-    return handleEnvWrite(ctx, currTarget, currStmt);
-  }
+
   else if (isTag(currStmt, "JSADDBRAND"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
     return pushOP(ctx, currTarget, OP_add_brand);
-  }
-  else if (isTag(currStmt, "JSComputedFieldWrite"))
-  {
-    IridiumSEXP *receiver = currStmt->args[0];
-    currTarget = lowerToStack(ctx, currTarget, receiver);
-
-    IridiumSEXP *field = currStmt->args[1];
-    currTarget = lowerToStack(ctx, currTarget, field);
-    currTarget = pushOP(ctx, currTarget, OP_to_propkey);
-
-    IridiumSEXP *assnVal = currStmt->args[2];
-    currTarget = lowerToStack(ctx, currTarget, assnVal);
-
-    return pushOP(ctx, currTarget, OP_put_array_el); // obj prop val
   }
   else if (isTag(currStmt, "Throw"))
   {
@@ -1683,6 +1647,44 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     return pushOP(ctx, currTarget, OP_ret);
   }
+  else if (isTag(currStmt, "JSSloppyDeclarationCheck"))
+  {
+    uint8_t check_flag = 0, define_flag = 0;
+
+#define DEFINE_GLOBAL_LEX_VAR (1 << 7)
+#define DEFINE_GLOBAL_FUNC_VAR (1 << 6)
+
+    if (hasFlag(currStmt, "JSLET"))
+    {
+      check_flag |= DEFINE_GLOBAL_LEX_VAR;
+      define_flag |= DEFINE_GLOBAL_LEX_VAR;
+      define_flag |= JS_PROP_WRITABLE;
+    }
+    else if (hasFlag(currStmt, "JSCONST"))
+    {
+      check_flag |= DEFINE_GLOBAL_LEX_VAR;
+      define_flag |= DEFINE_GLOBAL_LEX_VAR;
+    }
+    else if (hasFlag(currStmt, "JSVAR"))
+    {
+      // Redundant...
+      check_flag = 0;
+      check_flag = 0;
+    }
+    else
+    {
+      fprintf(stderr, "TODO: JSSloppyDeclarationCheck invalid flag config\n");
+      exit(1);
+    }
+
+    char *name = getFlagString(currStmt, "NAME");
+    currTarget = pushOP32(ctx, currTarget, OP_check_define_var, JS_NewAtom(ctx, name));
+    currTarget = push8(ctx, currTarget, check_flag);
+    currTarget = pushOP32(ctx, currTarget, OP_define_var, JS_NewAtom(ctx, name));
+    currTarget = push8(ctx, currTarget, define_flag);
+
+    return currTarget;
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
@@ -1856,7 +1858,7 @@ void populateBytecode(uint8_t *target, BCLList *currBC, int poolIDX)
     *t = currBC->data.four;
   }
 
-  if (currBC->bc == OP_define_method || currBC->bc == OP_define_class)
+  if (currBC->bc == OP_define_method || currBC->bc == OP_define_class || currBC->bc == OP_check_define_var || currBC->bc == OP_define_var)
   {
     uint8_t *t = (uint8_t *)(target + 5); // {0: OP} {atom: 1 2 3 4} {flag: 5}
     // Next slot is the op_flag
@@ -2602,7 +2604,8 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   return moduleList[topLevelModuleIdx];
 }
 
-typedef struct IridiumLoadResult {
+typedef struct IridiumLoadResult
+{
   bool isModule;
   void *ptr;
 } IridiumLoadResult;
@@ -2625,9 +2628,10 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
   JSFunctionBytecode *b = (JSFunctionBytecode *)moduleFunVal.u.ptr;
   bool isModule = hasFlag(iridiumCode, "JSModule");
 
-  if (!isModule) {
+  if (!isModule)
+  {
     js_dump_function_bytecode(ctx, b);
-    return ((IridiumLoadResult){ false, b });
+    return ((IridiumLoadResult){false, b});
   }
 
   // Module mode code
@@ -2751,7 +2755,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
   m->func_obj = moduleFunVal;
 
-  return ((IridiumLoadResult){ true, m });
+  return ((IridiumLoadResult){true, m});
 }
 
 void eval_iri_file(JSContext *ctx, const char *filename)
@@ -2765,13 +2769,16 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   }
 
   IridiumLoadResult iriRes = compile_iri_module(ctx, json);
-  if (iriRes.isModule) {
+  if (iriRes.isModule)
+  {
     JSValue moduleVal = JS_NewModuleValue(ctx, iriRes.ptr);
 
     JS_ResolveModule(ctx, moduleVal);
     JSValue res = JS_EvalFunction(ctx, moduleVal);
     JS_FreeValue(ctx, res);
-  } else {
+  }
+  else
+  {
     JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
     JSValue res = JS_EvalFunction(ctx, func_val);
     JS_FreeValue(ctx, res);
@@ -2815,13 +2822,16 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
     }
   }
 
-  if (iriRes.isModule) {
+  if (iriRes.isModule)
+  {
     JSValue moduleVal = JS_NewModuleValue(ctx, iriRes.ptr);
 
     JS_ResolveModule(ctx, moduleVal);
     JSValue res = JS_EvalFunction(ctx, moduleVal);
     JS_FreeValue(ctx, res);
-  } else {
+  }
+  else
+  {
     JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
     JSValue res = JS_EvalFunction(ctx, func_val);
     JS_FreeValue(ctx, res);
