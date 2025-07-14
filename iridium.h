@@ -5,14 +5,21 @@
 #include <stdbool.h>
 #include "./quickjs.h"
 #include "./cJSON.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum  {
+    NUMBER,
+    STRING,
+    BOOLEAN,
+    NULLPTR
+} IridiumDataType;
+
 typedef struct IridiumFlag {
     char * name;
-    enum datatype {
-        NUMBER,
-        STRING,
-        BOOLEAN,
-        NULLPTR
-    } datatype;
+    IridiumDataType datatype;
     union {
         double number;
         char * string;
@@ -39,5 +46,9 @@ void setBit(int bitIndex, int *value);
 void clearBit(int bitIndex, int *value);
 void toggleBit(int bitIndex, int *value);
 bool isBitSet(int bitIndex, int value);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* LIBIRID_H */

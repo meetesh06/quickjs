@@ -565,7 +565,8 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = pushOPConst(ctx, currTarget, OP_push_const, expValue);
 
     // Compile regexp
-    if (!ctx->compile_regexp) {
+    if (!ctx->compile_regexp)
+    {
       fprintf(stderr, "RegExp compiler not found in the context");
       exit(1);
     }
@@ -579,7 +580,8 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     JSAtom fieldAtom = JS_NewAtom(ctx, "concat");
     currTarget = pushOP32(ctx, currTarget, OP_get_field2, fieldAtom);
 
-    for (int i = 0; i < rval->numArgs; i++) {
+    for (int i = 0; i < rval->numArgs; i++)
+    {
       currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
     }
 
@@ -1000,7 +1002,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       currTarget = push8(ctx, currTarget, 0);
     }
 
-    // Set home object for classPropInitClosure 
+    // Set home object for classPropInitClosure
     IridiumSEXP *classPropInitClos = rval->args[3];
     currTarget = lowerToStack(ctx, currTarget, classPropInitClos);
     currTarget = pushOP(ctx, currTarget, OP_set_home_object);
@@ -1008,10 +1010,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 
     // Define methods on the prototype
     IridiumSEXP *methodList = rval->args[4];
-    for (int i = 0; i < methodList->numArgs; ++i) {
+    for (int i = 0; i < methodList->numArgs; ++i)
+    {
       IridiumSEXP *methodName = methodList->args[i]->args[0];
       IridiumSEXP *methodLambda = methodList->args[i]->args[1];
-      
+
       if (isTag(methodName, "String"))
       {
         // Lower the method on the stack
@@ -1020,12 +1023,12 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
         // Get the method name atom
         ensureTag(methodName, "String");
         JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-        
+
         // Define method on the prototype
         currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
         currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
       }
-      else if (isTag(methodName, "EnvRead"))      
+      else if (isTag(methodName, "EnvRead"))
       {
         // Lower the computed name of the function on stack
         currTarget = lowerToStack(ctx, currTarget, methodName);
@@ -1056,10 +1059,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     // Define methods on the constructor
     currTarget = pushOP(ctx, currTarget, OP_swap); // ctr proto -> proto ctr
     IridiumSEXP *staticMethodList = rval->args[5];
-    for (int i = 0; i < staticMethodList->numArgs; ++i) {
+    for (int i = 0; i < staticMethodList->numArgs; ++i)
+    {
       IridiumSEXP *methodName = staticMethodList->args[i]->args[0];
       IridiumSEXP *methodLambda = staticMethodList->args[i]->args[1];
-      
+
       if (isTag(methodName, "String"))
       {
         // Lower the method on the stack
@@ -1068,12 +1072,12 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
         // Get the method name atom
         ensureTag(methodName, "String");
         JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-        
+
         // Define method on the prototype
         currTarget = pushOP32(ctx, currTarget, OP_define_method, fieldAtom);
         currTarget = push8(ctx, currTarget, OP_DEFINE_METHOD_METHOD);
       }
-      else if (isTag(methodName, "EnvRead"))      
+      else if (isTag(methodName, "EnvRead"))
       {
         // Lower the computed name of the function on stack
         currTarget = lowerToStack(ctx, currTarget, methodName);
@@ -1347,9 +1351,9 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     assert(isTag(nextValTarget, "EnvBinding"));
     int nextValTargetIDX = getFlagNumber(nextValTarget, "REFIDX");
 
-    currTarget = pushOP16(ctx, currTarget, OP_put_loc, doneTargetIDX); // top of the stack contains <loop-done>
+    currTarget = pushOP16(ctx, currTarget, OP_put_loc, doneTargetIDX);    // top of the stack contains <loop-done>
     currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX); // top - 1 of the stack contains <loop-next>
-    return pushOP(ctx, currTarget, OP_drop); // drop enum_obj
+    return pushOP(ctx, currTarget, OP_drop);                              // drop enum_obj
   }
   else if (isTag(currStmt, "JSForOfStart"))
   {
@@ -1387,35 +1391,46 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     // Push obj onto the stack
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    
+
     // obj -> enum_obj
     currTarget = pushOP(ctx, currTarget, OP_for_in_start);
     IridiumSEXP *stackLocation = currStmt->args[1];
     int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding")) {
+    if (isTag(stackLocation, "EnvBinding"))
+    {
       currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+    }
+    else if (isTag(stackLocation, "RemoteEnvBinding"))
+    {
       currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-    } else {
+    }
+    else
+    {
       fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
     }
   }
   else if (isTag(currStmt, "JSForOfNext"))
-  {    
+  {
     // [it, meth, off] -> [it, meth, off, result, done]
     currTarget = pushOP16(ctx, currTarget, OP_for_of_next, 0);
-    
+
     // Store <for-of-loop-done> = done
     // Store <for-of-loop-next> = result
     assert(currStmt->numArgs == 2);
-    for (int i = 0; i < currStmt->numArgs; i++) {
+    for (int i = 0; i < currStmt->numArgs; i++)
+    {
       IridiumSEXP *stackLocation = currStmt->args[i];
       int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-      if (isTag(stackLocation, "EnvBinding")) {
+      if (isTag(stackLocation, "EnvBinding"))
+      {
         currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-      } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+      }
+      else if (isTag(stackLocation, "RemoteEnvBinding"))
+      {
         currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-      } else {
+      }
+      else
+      {
         fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
       }
     }
@@ -1582,11 +1597,16 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     IridiumSEXP *stackLocation = currStmt->args[1];
     int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding")) {
+    if (isTag(stackLocation, "EnvBinding"))
+    {
       currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+    }
+    else if (isTag(stackLocation, "RemoteEnvBinding"))
+    {
       currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-    } else {
+    }
+    else
+    {
       fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
     }
   }
@@ -1635,11 +1655,16 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     IridiumSEXP *stackLocation = currStmt->args[3];
     int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding")) {
+    if (isTag(stackLocation, "EnvBinding"))
+    {
       currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+    }
+    else if (isTag(stackLocation, "RemoteEnvBinding"))
+    {
       currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-    } else {
+    }
+    else
+    {
       fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
     }
 
@@ -2382,11 +2407,16 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   printf("ADDR: %p\n", b);
 
   // Set fun kind
-  if (hasFlag(bbContainer, "GENERATOR") && hasFlag(bbContainer, "ASYNC")) {
+  if (hasFlag(bbContainer, "GENERATOR") && hasFlag(bbContainer, "ASYNC"))
+  {
     b->func_kind = JS_FUNC_ASYNC_GENERATOR;
-  } else if (hasFlag(bbContainer, "GENERATOR")) {
+  }
+  else if (hasFlag(bbContainer, "GENERATOR"))
+  {
     b->func_kind = JS_FUNC_GENERATOR;
-  } else if (hasFlag(bbContainer, "ASYNC")) {
+  }
+  else if (hasFlag(bbContainer, "ASYNC"))
+  {
     b->func_kind = JS_FUNC_ASYNC;
   }
 
@@ -2540,6 +2570,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     }
   }
 
+
   return moduleList[topLevelModuleIdx];
 }
 
@@ -2562,7 +2593,6 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   }
 
   IridiumSEXP *iridiumCode = parseIridiumSEXP(code);
-
   // Generate BC
   JSValue moduleFunVal = generateBytecode(ctx, iridiumCode);
 

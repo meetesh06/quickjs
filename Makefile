@@ -25,7 +25,7 @@
 # THE SOFTWARE.
 
 BUILD_DIR=build
-BUILD_TYPE?=Release
+BUILD_TYPE?=debug
 INSTALL_PREFIX?=/usr/local
 
 QJS=$(BUILD_DIR)/qjs

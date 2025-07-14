@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(quickjs LANGUAGES C)
+project(quickjs LANGUAGES C CXX)
 
 include(CheckCCompilerFlag)
 include(GNUInstallDirs)
@@ -231,7 +231,7 @@ set(qjs_sources
     libunicode.c
     quickjs.c
     xsum.c
-    iridium.c
+    iridium2.cpp
     cJSON.c
 )
 
@@ -261,7 +261,7 @@ target_include_directories(qjs PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(qjs PUBLIC ${qjs_libs})
+target_link_libraries(qjs PUBLIC ${qjs_libs} stdc++)
 
 if(EMSCRIPTEN)
     add_executable(qjs_wasm ${qjs_sources})
