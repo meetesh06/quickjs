@@ -8,6 +8,8 @@
 #include <assert.h>
 #include <ctype.h>
 
+#define check_dump_flag(ctx, flag)  ((JS_GetDumpFlags(ctx->rt) & (flag +0)) == (flag +0))
+
 #define JS_STACK_SIZE_MAX 65534
 
 typedef enum OPCodeFormat
@@ -1179,6 +1181,29 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
     return pushOP(ctx, currTarget, OP_yield);
   }
+  else if (isTag(rval, "BitInt"))
+  {
+    char *str = getFlagString(rval, "IridiumPrimitive");
+
+    char *endptr;
+
+    errno = 0; // Reset errno before call
+    int64_t value = strtoll(str, &endptr, 10);
+
+    if (errno == ERANGE)
+    {
+      fprintf(stderr, "BIGINT: BitInt: Overflow/Underflow occurred\n");
+      exit(1);
+    }
+    else if (endptr == str)
+    {
+      fprintf(stderr, "BIGINT: BitInt: No digits were found\n");
+      exit(1);
+    }
+
+    JSValue val = JS_NewBigInt64(ctx, value);
+    return pushOPConst(ctx, currTarget, OP_push_const, val);
+  }
   else if (isTag(rval, "Await"))
   {
     currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
@@ -1261,7 +1286,8 @@ BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currSt
     IridiumSEXP *gBindingName = lval->args[0];
     assert(isTag(gBindingName, "String"));
     char *name = getFlagString(gBindingName, "IridiumPrimitive");
-    if (safe) {
+    if (safe)
+    {
       currTarget = lowerToStack(ctx, currTarget, rval);
       currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
     }
@@ -1315,7 +1341,8 @@ BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currSt
 
 BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
 {
-  if (isTag(currStmt, "EnvWrite")) {
+  if (isTag(currStmt, "EnvWrite"))
+  {
     currTarget = handleEnvWrite(ctx, currTarget, currStmt, false);
   }
   else if (isTag(currStmt, "FieldWrite") || isTag(currStmt, "JSComputedFieldWrite"))
@@ -1685,6 +1712,38 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     return currTarget;
   }
+  else if (isTag(currStmt, "JSFuncDecl"))
+  {
+    IridiumSEXP *loc = currStmt->args[0];
+    IridiumSEXP *closure = currStmt->args[1];
+
+    if (isTag(loc, "GlobalBinding"))
+    {
+      char *name = getFlagString(loc->args[0], "IridiumPrimitive");
+      currTarget = pushOP32(ctx, currTarget, OP_check_define_var, JS_NewAtom(ctx, name));
+      currTarget = push8(ctx, currTarget, 64);
+      currTarget = lowerToStack(ctx, currTarget, closure);
+      currTarget = pushOP32(ctx, currTarget, OP_define_func, JS_NewAtom(ctx, name));
+      currTarget = push8(ctx, currTarget, 0);
+    }
+    else if (isTag(loc, "RemoteEnvBinding"))
+    {
+      currTarget = lowerToStack(ctx, currTarget, closure);
+      int refIdx = getFlagNumber(loc, "REFIDX");
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
+    }
+    else if (isTag(loc, "EnvBinding"))
+    {
+      currTarget = lowerToStack(ctx, currTarget, closure);
+      int refIdx = getFlagNumber(loc, "REFIDX");
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    }
+    else
+    {
+      fprintf(stderr, "TODO: unhandled JSFuncDecl case\n");
+      exit(1);
+    }
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
@@ -1858,7 +1917,7 @@ void populateBytecode(uint8_t *target, BCLList *currBC, int poolIDX)
     *t = currBC->data.four;
   }
 
-  if (currBC->bc == OP_define_method || currBC->bc == OP_define_class || currBC->bc == OP_check_define_var || currBC->bc == OP_define_var)
+  if (currBC->bc == OP_define_method || currBC->bc == OP_define_class || currBC->bc == OP_check_define_var || currBC->bc == OP_define_var || currBC->bc == OP_define_func)
   {
     uint8_t *t = (uint8_t *)(target + 5); // {0: OP} {atom: 1 2 3 4} {flag: 5}
     // Next slot is the op_flag
@@ -2592,14 +2651,19 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     }
   }
 
-  fprintf(stdout, "[Iridium] Dumping all non-topLevel module code\n");
+  if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+    fprintf(stdout, "[Iridium] Dumping all non-topLevel module code\n");
+  }
+  
   for (int i = 0; i < numModules; i++)
   {
     if (i == topLevelModuleIdx)
       continue;
     JSValue funBC = moduleList[i];
     JSFunctionBytecode *b = (JSFunctionBytecode *)funBC.u.ptr;
-    js_dump_function_bytecode(ctx, b);
+    if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+      js_dump_function_bytecode(ctx, b);
+    }
   }
   return moduleList[topLevelModuleIdx];
 }
@@ -2630,7 +2694,9 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
   if (!isModule)
   {
-    js_dump_function_bytecode(ctx, b);
+    if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+      js_dump_function_bytecode(ctx, b);
+    }
     return ((IridiumLoadResult){false, b});
   }
 
@@ -2750,8 +2816,10 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     }
   }
 
-  fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
-  js_dump_function_bytecode(ctx, b);
+  if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+    fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
+    js_dump_function_bytecode(ctx, b);
+  }
 
   m->func_obj = moduleFunVal;
 

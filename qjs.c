@@ -378,7 +378,7 @@ void help(void)
 {
     printf("QuickJS-ng-super version %s\n"
            "usage: " PROG_NAME " [options] [file [args]]\n"
-           "-I  --iri         Run Iridium Code\n"
+           "-X  --iri         Run Iridium Code\n"
            "-P  --iri-pika    Run Iridium Pika Bundle\n"
            "-h  --help         list options\n"
            "-e  --eval EXPR    evaluate EXPR\n"
@@ -515,7 +515,7 @@ int main(int argc, char **argv)
             // 
             // Iridium options
             // 
-            if (opt == 'I' || !strcmp(longopt, "iri")) {
+            if (opt == 'X' || !strcmp(longopt, "iri")) {
                 setBit(0, &iridium_opts);
                 continue;
             }
