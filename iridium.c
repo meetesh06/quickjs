@@ -1189,11 +1189,6 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     return pushOP(ctx, currTarget, OP_null);
   }
-  else if (isTag(rval, "Yield"))
-  {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    return pushOP(ctx, currTarget, OP_yield);
-  }
   else if (isTag(rval, "BitInt"))
   {
     char *str = getFlagString(rval, "IridiumPrimitive");
@@ -1502,7 +1497,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
 
     // Jmp to TRUE if stack value is true
-    currTarget = pushOP32(ctx, currTarget, OP_if_true, getFlagNumber(currStmt, "IDX"));
+    currTarget = pushOP32(ctx, currTarget, hasFlag(currStmt, "NOT") ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
 
     return currTarget;
   }
@@ -1715,6 +1710,42 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   else if (isTag(currStmt, "Ret"))
   {
     return pushOP(ctx, currTarget, OP_ret);
+  }
+  else if (isTag(currStmt, "Yield"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    currTarget = pushOP(ctx, currTarget, OP_yield);
+
+    IridiumSEXP *stackLocation = currStmt->args[1];
+    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    if (isTag(stackLocation, "EnvBinding"))
+    {
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+    }
+    else if (isTag(stackLocation, "RemoteEnvBinding"))
+    {
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+    }
+    else
+    {
+      fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
+    }
+
+    stackLocation = currStmt->args[2];
+    stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    if (isTag(stackLocation, "EnvBinding"))
+    {
+      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+    }
+    else if (isTag(stackLocation, "RemoteEnvBinding"))
+    {
+      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+    }
+    else
+    {
+      fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
+    }
+    
   }
   else if (isTag(currStmt, "JSSloppyDeclarationCheck"))
   {
