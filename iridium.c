@@ -491,6 +491,18 @@ int getFlagNumber(IridiumSEXP *binding, char *flagName)
   exit(1);
 }
 
+double getFlagDouble(IridiumSEXP *binding, char *flagName)
+{
+  IridiumFlag *flag = getFlag(binding, flagName);
+  if (flag->datatype == NUMBER)
+  {
+    return flag->value.number;
+  }
+  fprintf(stderr, "TODO: failed to get NUMBER(double)\n");
+  exit(1);
+}
+
+
 char *getFlagString(IridiumSEXP *binding, char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
@@ -591,7 +603,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   }
   else if (isTag(rval, "Number"))
   {
-    int data = getFlagNumber(rval, "IridiumPrimitive");
+    double data = getFlagDouble(rval, "IridiumPrimitive");
     JSValue jsvalue = JS_NewNumber(ctx, data);
     return pushOPConst(ctx, currTarget, OP_push_const, jsvalue);
   }
@@ -609,7 +621,8 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     // If this is an arg, get the arg idx
     if (hasFlag(rval, "JSARG"))
     {
-      int argIdx = parse_arg_index(getFlagString(rval->args[0], "IridiumPrimitive"));
+      int argIdx = getFlagNumber(rval, "REFIDX");
+      // int argIdx = parse_arg_index(getFlagString(rval->args[0], "IridiumPrimitive"));
       assert(argIdx > -1);
       return pushOP16(ctx, currTarget, OP_get_arg, argIdx);
     }
@@ -1185,23 +1198,32 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     char *str = getFlagString(rval, "IridiumPrimitive");
 
-    char *endptr;
+    // char *endptr;
 
-    errno = 0; // Reset errno before call
-    int64_t value = strtoll(str, &endptr, 10);
+    // errno = 0; // Reset errno before call
+    // int64_t value = strtoll(str, &endptr, 10);
 
-    if (errno == ERANGE)
-    {
-      fprintf(stderr, "BIGINT: BitInt: Overflow/Underflow occurred\n");
-      exit(1);
+    // if (errno == ERANGE)
+    // {
+    //   fprintf(stderr, "BIGINT: BitInt: Overflow/Underflow occurred\n");
+    //   exit(1);
+    // }
+    // else if (endptr == str)
+    // {
+    //   fprintf(stderr, "BIGINT: BitInt: No digits were found\n");
+    //   exit(1);
+    // }
+
+    // JSValue val = JS_NewBigInt64(ctx, value);
+    // return pushOPConst(ctx, currTarget, OP_push_const, val);
+
+    JSBigInt *r;
+    JSValue val;
+    r = js_bigint_from_string(ctx, str, 10);
+    if (!r) {
+      val = JS_ThrowOutOfMemory(ctx);
     }
-    else if (endptr == str)
-    {
-      fprintf(stderr, "BIGINT: BitInt: No digits were found\n");
-      exit(1);
-    }
-
-    JSValue val = JS_NewBigInt64(ctx, value);
+    val = JS_CompactBigInt(ctx, r);
     return pushOPConst(ctx, currTarget, OP_push_const, val);
   }
   else if (isTag(rval, "Await"))
@@ -1544,6 +1566,26 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     IridiumSEXP *thisLoc = currStmt->args[0];
     ensureTag(thisLoc, "EnvBinding");
     int refIdx = getFlagNumber(thisLoc, "REFIDX");
+    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
+  else if (isTag(currStmt, "JSARGUMENTSINIT"))
+  {
+    currTarget = pushOP8(ctx, currTarget, OP_special_object, 0);
+
+    IridiumSEXP *argsLoc = currStmt->args[0];
+    ensureTag(argsLoc, "EnvBinding");
+    int refIdx = getFlagNumber(argsLoc, "REFIDX");
+
+    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
+  else if (isTag(currStmt, "JSMARGUMENTSINIT"))
+  {
+    currTarget = pushOP8(ctx, currTarget, OP_special_object, 1);
+
+    IridiumSEXP *argsLoc = currStmt->args[0];
+    ensureTag(argsLoc, "EnvBinding");
+    int refIdx = getFlagNumber(argsLoc, "REFIDX");
+
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
   else if (isTag(currStmt, "CallSite"))
@@ -2498,6 +2540,11 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   }
 
   // Set special flags
+  if (hasFlag(bbContainer, "ARGUMENTS"))
+  {
+    b->arguments_allowed = 1;
+  }
+
   if (hasFlag(bbContainer, "PROTO"))
   {
     b->has_prototype = 1;
