@@ -1886,6 +1886,62 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       exit(1);
     }
   }
+  else if (isTag(currStmt, "JSAppend"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]); // tmp
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]); // insertionIdx
+    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]); // spreadVal
+    currTarget = pushOP(ctx, currTarget, OP_append);
+
+    { // InsertionIdxLoc
+      IridiumSEXP *insertionLoc = currStmt->args[3];
+      if (isTag(insertionLoc, "GlobalBinding"))
+      {
+        char *name = getFlagString(insertionLoc->args[0], "IridiumPrimitive");
+        currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
+      }
+      else if (isTag(insertionLoc, "RemoteEnvBinding"))
+      {
+        int refIdx = getFlagNumber(insertionLoc, "REFIDX");
+        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
+      }
+      else if (isTag(insertionLoc, "EnvBinding"))
+      {
+        int refIdx = getFlagNumber(insertionLoc, "REFIDX");
+        currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+      }
+      else
+      {
+        fprintf(stderr, "TODO: unhandled JSAppend, insertionLoc case\n");
+        exit(1);
+      }
+    }
+
+    { // tempLoc
+      IridiumSEXP *tmpLoc = currStmt->args[4];
+      if (isTag(tmpLoc, "GlobalBinding"))
+      {
+        char *name = getFlagString(tmpLoc->args[0], "IridiumPrimitive");
+        currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
+      }
+      else if (isTag(tmpLoc, "RemoteEnvBinding"))
+      {
+        int refIdx = getFlagNumber(tmpLoc, "REFIDX");
+        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
+      }
+      else if (isTag(tmpLoc, "EnvBinding"))
+      {
+        int refIdx = getFlagNumber(tmpLoc, "REFIDX");
+        currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+      }
+      else
+      {
+        fprintf(stderr, "TODO: unhandled JSAppend, tmpLoc case\n");
+        exit(1);
+      }
+    }
+
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
