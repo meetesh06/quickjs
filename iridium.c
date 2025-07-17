@@ -10,6 +10,11 @@
 
 #define check_dump_flag(ctx, flag)  ((JS_GetDumpFlags(ctx->rt) & (flag +0)) == (flag +0))
 
+#define OP_DEFINE_METHOD_METHOD 0
+#define OP_DEFINE_METHOD_GETTER 1
+#define OP_DEFINE_METHOD_SETTER 2
+#define OP_DEFINE_METHOD_ENUMERABLE 4
+
 #define JS_STACK_SIZE_MAX 65534
 
 typedef enum OPCodeFormat
@@ -610,6 +615,35 @@ int parse_arg_index(const char *str)
   return atoi(number_part);
 }
 
+// ============== Misc ============== //
+
+BCLList *safeStoreWhatevesOnTheStack(JSContext* ctx, IridiumSEXP *loc, BCLList * currTarget) {
+  if (isTag(loc, "GlobalBinding"))
+  {
+    char *name = getFlagString(loc->args[0], "IridiumPrimitive");
+    currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
+  }
+  else if (isTag(loc, "RemoteEnvBinding"))
+  {
+    int refIdx = getFlagNumber(loc, "REFIDX");
+    currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
+  }
+  else if (isTag(loc, "EnvBinding"))
+  {
+    int refIdx = getFlagNumber(loc, "REFIDX");
+    currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
+  else
+  {
+    fprintf(stderr, "TODO: unhandled JSDefineObjProp, loc case\n");
+    exit(1);
+  }
+  return currTarget;
+}
+
+// ============== Misc ============== //
+
+
 BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 {
   if (isTag(rval, "String"))
@@ -981,11 +1015,6 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     return pushOP(ctx, currTarget, OP_drop);
   }
 
-#define OP_DEFINE_METHOD_METHOD 0
-#define OP_DEFINE_METHOD_GETTER 1
-#define OP_DEFINE_METHOD_SETTER 2
-#define OP_DEFINE_METHOD_ENUMERABLE 4
-
   else if (isTag(rval, "JSObjectMethod"))
   {
     IridiumSEXP *val = rval->args[1];
@@ -1019,20 +1048,20 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 
   else if (isTag(rval, "JSObject"))
   {
-    currTarget = pushOP(ctx, currTarget, OP_object);
-    for (int i = 0; i < rval->numArgs; i++)
-    {
-      IridiumSEXP *ele = rval->args[i];
-      if (isTag(ele, "JSObjectProp") || isTag(ele, "JSComputedObjectProp") || isTag(ele, "JSObjectMethod"))
-      {
-        currTarget = lowerToStack(ctx, currTarget, ele);
-      }
-      else
-      {
-        fprintf(stderr, "TODO: unhandled Object Init Element: %s\n", ele->tag);
-        exit(1);
-      }
-    }
+    return pushOP(ctx, currTarget, OP_object);
+    // for (int i = 0; i < rval->numArgs; i++)
+    // {
+    //   IridiumSEXP *ele = rval->args[i];
+    //   if (isTag(ele, "JSObjectProp") || isTag(ele, "JSComputedObjectProp") || isTag(ele, "JSObjectMethod"))
+    //   {
+    //     currTarget = lowerToStack(ctx, currTarget, ele);
+    //   }
+    //   else
+    //   {
+    //     fprintf(stderr, "TODO: unhandled Object Init Element: %s\n", ele->tag);
+    //     exit(1);
+    //   }
+    // }
   }
   else if (isTag(rval, "PoolBinding"))
   {
@@ -1758,20 +1787,8 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     // OP_copy_data_properties
     currTarget = pushOP16(ctx, currTarget, OP_copy_data_properties, 68);
 
-    IridiumSEXP *stackLocation = currStmt->args[3];
-    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding"))
-    {
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-    }
-    else if (isTag(stackLocation, "RemoteEnvBinding"))
-    {
-      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-    }
-    else
-    {
-      fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-    }
+    IridiumSEXP *loc = currStmt->args[3];
+    currTarget = safeStoreWhatevesOnTheStack(ctx, loc, currTarget);
 
     currTarget = pushOP(ctx, currTarget, OP_drop);
     return pushOP(ctx, currTarget, OP_drop);
@@ -1895,52 +1912,83 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     { // InsertionIdxLoc
       IridiumSEXP *insertionLoc = currStmt->args[3];
-      if (isTag(insertionLoc, "GlobalBinding"))
-      {
-        char *name = getFlagString(insertionLoc->args[0], "IridiumPrimitive");
-        currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
-      }
-      else if (isTag(insertionLoc, "RemoteEnvBinding"))
-      {
-        int refIdx = getFlagNumber(insertionLoc, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
-      }
-      else if (isTag(insertionLoc, "EnvBinding"))
-      {
-        int refIdx = getFlagNumber(insertionLoc, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
-      }
-      else
-      {
-        fprintf(stderr, "TODO: unhandled JSAppend, insertionLoc case\n");
-        exit(1);
-      }
+      currTarget = safeStoreWhatevesOnTheStack(ctx, insertionLoc, currTarget);
     }
 
     { // tempLoc
       IridiumSEXP *tmpLoc = currStmt->args[4];
-      if (isTag(tmpLoc, "GlobalBinding"))
-      {
-        char *name = getFlagString(tmpLoc->args[0], "IridiumPrimitive");
-        currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
-      }
-      else if (isTag(tmpLoc, "RemoteEnvBinding"))
-      {
-        int refIdx = getFlagNumber(tmpLoc, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
-      }
-      else if (isTag(tmpLoc, "EnvBinding"))
-      {
-        int refIdx = getFlagNumber(tmpLoc, "REFIDX");
-        currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
-      }
-      else
-      {
-        fprintf(stderr, "TODO: unhandled JSAppend, tmpLoc case\n");
-        exit(1);
-      }
+      currTarget = safeStoreWhatevesOnTheStack(ctx, tmpLoc, currTarget);
     }
 
+  }
+  else if (isTag(currStmt, "JSDefineObjProp"))
+  {
+    IridiumSEXP *obj  = currStmt->args[0];
+    currTarget = lowerToStack(ctx, currTarget, obj);
+    IridiumSEXP *field = currStmt->args[1];
+    IridiumSEXP *val  = currStmt->args[2];
+
+    if (isTag(field, "String")) {
+      currTarget = lowerToStack(ctx, currTarget, val);
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+      currTarget = pushOP32(ctx, currTarget, OP_define_field, fieldAtom);
+    }
+    else
+    {
+      currTarget = lowerToStack(ctx, currTarget, field);
+      currTarget = lowerToStack(ctx, currTarget, val);
+      currTarget = pushOP(ctx, currTarget, OP_define_array_el);
+      currTarget = pushOP(ctx, currTarget, OP_drop);
+    }
+
+    { // tempLoc
+      IridiumSEXP *loc = currStmt->args[3];
+      currTarget = safeStoreWhatevesOnTheStack(ctx, loc, currTarget);
+    }
+  }
+  else if (isTag(currStmt, "JSDefineObjMethod"))
+  {
+    uint8_t op_flag;
+    if (hasFlag(currStmt, "METHOD"))
+    {
+      op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
+    }
+    else if (hasFlag(currStmt, "GET"))
+    {
+      op_flag = OP_DEFINE_METHOD_GETTER | OP_DEFINE_METHOD_ENUMERABLE;
+    }
+    else if (hasFlag(currStmt, "SET"))
+    {
+      op_flag = OP_DEFINE_METHOD_SETTER | OP_DEFINE_METHOD_ENUMERABLE;
+    }
+    else
+    {
+      fprintf(stderr, "TODO: JSDefineObjMethod invalid flag\n");
+      exit(1);
+    }
+    
+    IridiumSEXP *obj  = currStmt->args[0];
+    currTarget = lowerToStack(ctx, currTarget, obj);
+    IridiumSEXP *field = currStmt->args[1];
+    IridiumSEXP *val  = currStmt->args[2];
+
+    
+    if (isTag(field, "String")) {
+      currTarget = lowerToStack(ctx, currTarget, val);
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+      currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
+    }
+    else
+    {
+      currTarget = lowerToStack(ctx, currTarget, field);
+      currTarget = lowerToStack(ctx, currTarget, val);
+      currTarget = pushOPFlags(ctx, currTarget, OP_define_method_computed, op_flag);
+    }
+
+    { // tempLoc
+      IridiumSEXP *loc = currStmt->args[3];
+      currTarget = safeStoreWhatevesOnTheStack(ctx, loc, currTarget);
+    }
   }
   else
   {
