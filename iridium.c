@@ -2655,7 +2655,6 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
     b->vardefs = (JSVarDef *)((uint8_t *)b + vardefs_offset);
     b->arg_count = arg_count;
     b->var_count = var_count;
-    b->defined_arg_count = arg_count;
   }
 
   if (closure_var_count > 0)
@@ -2666,6 +2665,10 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
 
   b->byte_code_buf = (uint8_t *)b + byte_code_offset;
   b->byte_code_len = byte_code_len;
+
+  // Set defined args count
+  int ecmaArgsCount = getFlagNumber(bbContainer, "ECMAArgs");
+  b->defined_arg_count = ecmaArgsCount;
 
   // Metadata
   b->func_name = JS_ATOM_NULL;
