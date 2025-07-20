@@ -1733,6 +1733,16 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     int refIdx = getFlagNumber(thisLoc, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
+  else if (isTag(currStmt, "JSMODULEMETAINIT"))
+  {
+    currTarget = pushOP8(ctx, currTarget, OP_special_object, 6);
+
+    IridiumSEXP *thisLoc = currStmt->args[0];
+    ensureTag(thisLoc, "EnvBinding");
+    int refIdx = getFlagNumber(thisLoc, "REFIDX");
+
+    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+  }
   else if (isTag(currStmt, "JSARGUMENTSINIT"))
   {
     currTarget = pushOP8(ctx, currTarget, OP_special_object, 0);
@@ -3033,6 +3043,9 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
   // Execute the file
   cJSON *absoluteFilePath = cJSON_GetObjectItem(json, "absoluteFilePath");
   JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, cJSON_GetStringValue(absoluteFilePath)));
+
+  // Bytecode container gets the filename
+  b->filename = JS_NewAtom(ctx, cJSON_GetStringValue(absoluteFilePath));
 
   // Initialize Module
   IridiumSEXP *moduleRequests = iridiumCode->args[0];
