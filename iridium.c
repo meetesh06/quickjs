@@ -1483,17 +1483,16 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     currTarget = pushOP(ctx, currTarget, OP_for_in_next);
 
-    IridiumSEXP *doneTarget = currStmt->args[1];
-    assert(isTag(doneTarget, "EnvBinding"));
-    int doneTargetIDX = getFlagNumber(doneTarget, "REFIDX");
+    bool safe = getFlagBoolean(currStmt, "SAFE");
+    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
 
-    IridiumSEXP *nextValTarget = currStmt->args[2];
-    assert(isTag(nextValTarget, "EnvBinding"));
-    int nextValTargetIDX = getFlagNumber(nextValTarget, "REFIDX");
+    IridiumSEXP *loc = currStmt->args[1];
+    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
 
-    currTarget = pushOP16(ctx, currTarget, OP_put_loc, doneTargetIDX);    // top of the stack contains <loop-done>
-    currTarget = pushOP16(ctx, currTarget, OP_put_loc, nextValTargetIDX); // top - 1 of the stack contains <loop-next>
-    return pushOP(ctx, currTarget, OP_drop);                              // drop enum_obj
+    loc = currStmt->args[2];
+    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+    return pushOP(ctx, currTarget, OP_drop); // drop enum_obj
   }
   else if (isTag(currStmt, "JSForOfStart"))
   {
@@ -1510,48 +1509,29 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     // obj -> enum_obj
     currTarget = pushOP(ctx, currTarget, OP_for_in_start);
-    IridiumSEXP *stackLocation = currStmt->args[1];
-    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding"))
-    {
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-    }
-    else if (isTag(stackLocation, "RemoteEnvBinding"))
-    {
-      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-    }
-    else
-    {
-      fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-    }
+
+    bool safe = getFlagBoolean(currStmt, "SAFE");
+    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
+
+    IridiumSEXP *loc = currStmt->args[1];
+    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
   }
   else if (isTag(currStmt, "JSForOfNext"))
   {
     // [it, meth, off] -> [it, meth, off, result, done]
     currTarget = pushOP16(ctx, currTarget, OP_for_of_next, 0);
 
-    // Store <for-of-loop-done> = done
-    // Store <for-of-loop-next> = result
-    assert(currStmt->numArgs == 2);
-    for (int i = 0; i < currStmt->numArgs; i++)
-    {
-      IridiumSEXP *stackLocation = currStmt->args[i];
-      int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-      if (isTag(stackLocation, "EnvBinding"))
-      {
-        currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-      }
-      else if (isTag(stackLocation, "RemoteEnvBinding"))
-      {
-        currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-      }
-      else
-      {
-        fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-      }
-    }
-  }
+    bool safe = getFlagBoolean(currStmt, "SAFE");
+    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
 
+    IridiumSEXP *loc = currStmt->args[0];
+    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+
+    loc = currStmt->args[1];
+    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+  }
   else if (isTag(currStmt, "JSADDBRAND"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
@@ -1831,7 +1811,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = pushOP(ctx, currTarget, OP_drop);
     return pushOP(ctx, currTarget, OP_drop);
   }
-  else if (isTag(currStmt, "JSIteratorClose"))
+  else if (isTag(currStmt, "JSForOfIteratorClose"))
   {
     return pushOP(ctx, currTarget, OP_iterator_close);
   }
