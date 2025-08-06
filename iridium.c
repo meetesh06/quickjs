@@ -8,7 +8,7 @@
 #include <assert.h>
 #include <ctype.h>
 
-#define check_dump_flag(ctx, flag)  ((JS_GetDumpFlags(ctx->rt) & (flag +0)) == (flag +0))
+#define check_dump_flag(ctx, flag) ((JS_GetDumpFlags(ctx->rt) & (flag + 0)) == (flag + 0))
 
 #define OP_DEFINE_METHOD_METHOD 0
 #define OP_DEFINE_METHOD_GETTER 1
@@ -93,7 +93,7 @@ static const JSOpCode opcode_info[OP_COUNT + (OP_TEMP_END - OP_TEMP_START)] = {
 };
 
 #define short_opcode_info(op) \
-   opcode_info[(op) >= OP_TEMP_START ? (op) + (OP_TEMP_END - OP_TEMP_START) : (op)]
+  opcode_info[(op) >= OP_TEMP_START ? (op) + (OP_TEMP_END - OP_TEMP_START) : (op)]
 
 //
 // Reading and loading source JSON data
@@ -557,7 +557,6 @@ double getFlagDouble(IridiumSEXP *binding, char *flagName)
   exit(1);
 }
 
-
 char *getFlagString(IridiumSEXP *binding, char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
@@ -617,7 +616,8 @@ int parse_arg_index(const char *str)
 
 // ============== Misc ============== //
 
-BCLList *storeWhatevesOnTheStack(JSContext* ctx, IridiumSEXP *loc, BCLList * currTarget, bool safe, bool thisInit, bool isStrict, bool saveResToStack) {  
+BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *currTarget, bool safe, bool thisInit, bool isStrict, bool saveResToStack)
+{
   if (saveResToStack)
     currTarget = pushOP(ctx, currTarget, OP_dup);
 
@@ -670,9 +670,7 @@ BCLList *storeWhatevesOnTheStack(JSContext* ctx, IridiumSEXP *loc, BCLList * cur
   return currTarget;
 }
 
-
 // ============== Misc ============== //
-
 
 BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 {
@@ -1085,7 +1083,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     IridiumSEXP *field = rval->args[0];
     ensureTag(field, "String");
     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    
+
     uint8_t op_flag;
     if (hasFlag(rval, "METHOD"))
     {
@@ -1152,7 +1150,6 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = pushOP32Flags(ctx, currTarget, OP_define_class, classNameAtom, flags);
     // Class Flags, the bytecode itself is 5 + 1 bytes (1 byte OPcode + 4 byte name + 1 byte flags)
 
-
     // Set home object for classPropInitClosure
     IridiumSEXP *classPropInitClos = rval->args[3];
     currTarget = lowerToStack(ctx, currTarget, classPropInitClos);
@@ -1167,16 +1164,23 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       IridiumSEXP *methodLambda = methodList->args[i]->args[1];
       IridiumSEXP *methodKind = methodList->args[i]->args[2];
       assert(isTag(methodKind, "String"));
-      char * kindStr = getFlagString(methodKind, "IridiumPrimitive");
+      char *kindStr = getFlagString(methodKind, "IridiumPrimitive");
       uint8_t op_flag;
 
-      if (strcmp(kindStr, "METHOD") == 0) {
+      if (strcmp(kindStr, "METHOD") == 0)
+      {
         op_flag = OP_DEFINE_METHOD_METHOD;
-      } else if (strcmp(kindStr, "GET") == 0) {
+      }
+      else if (strcmp(kindStr, "GET") == 0)
+      {
         op_flag = OP_DEFINE_METHOD_GETTER;
-      } else if (strcmp(kindStr, "SET") == 0) {
+      }
+      else if (strcmp(kindStr, "SET") == 0)
+      {
         op_flag = OP_DEFINE_METHOD_SETTER;
-      } else {
+      }
+      else
+      {
         fprintf(stderr, "TODO: Classmethod flag is invalid\n");
         exit(1);
       }
@@ -1229,20 +1233,27 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       IridiumSEXP *methodLambda = staticMethodList->args[i]->args[1];
       IridiumSEXP *methodKind = staticMethodList->args[i]->args[2];
       assert(isTag(methodKind, "String"));
-      char * kindStr = getFlagString(methodKind, "IridiumPrimitive");
+      char *kindStr = getFlagString(methodKind, "IridiumPrimitive");
       uint8_t op_flag;
 
-      if (strcmp(kindStr, "METHOD") == 0) {
+      if (strcmp(kindStr, "METHOD") == 0)
+      {
         op_flag = OP_DEFINE_METHOD_METHOD;
-      } else if (strcmp(kindStr, "GET") == 0) {
+      }
+      else if (strcmp(kindStr, "GET") == 0)
+      {
         op_flag = OP_DEFINE_METHOD_GETTER;
-      } else if (strcmp(kindStr, "SET") == 0) {
+      }
+      else if (strcmp(kindStr, "SET") == 0)
+      {
         op_flag = OP_DEFINE_METHOD_SETTER;
-      } else {
+      }
+      else
+      {
         fprintf(stderr, "TODO: Classmethod flag is invalid\n");
         exit(1);
       }
-      
+
       if (isTag(methodName, "String"))
       {
         // Lower the method on the stack
@@ -1377,7 +1388,8 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     JSBigInt *r;
     JSValue val;
     r = js_bigint_from_string(ctx, str, 10);
-    if (!r) {
+    if (!r)
+    {
       val = JS_ThrowOutOfMemory(ctx);
     }
     val = JS_CompactBigInt(ctx, r);
@@ -1632,13 +1644,66 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     return currTarget;
   }
-  else if (isTag(currStmt, "JSTHISINIT"))
+  else if (isTag(currStmt, "JSImplicitBindingDeclaration"))
   {
-    currTarget = pushOP(ctx, currTarget, OP_push_this);
-    IridiumSEXP *thisLoc = currStmt->args[0];
-    ensureTag(thisLoc, "EnvBinding");
-    int refIdx = getFlagNumber(thisLoc, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    int OPID = getFlagNumber(currStmt, "OPID");
+    bool safe = getFlagBoolean(currStmt, "SAFE");
+    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
+    switch (OPID)
+    {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+    {
+      currTarget = pushOP8(ctx, currTarget, OP_special_object, OPID);
+      IridiumSEXP *loc = currStmt->args[0];
+      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      break;
+    }
+    case 7:
+    case 8:
+    {
+      IridiumSEXP *loc = currStmt->args[0];
+      IridiumSEXP *args = currStmt->args[1];
+      ensureTag(args, "List");
+      assert(args->numArgs == 1);
+      currTarget = lowerToStack(ctx, currTarget, args->args[0]);
+      currTarget = pushOP(ctx, currTarget, OP_get_super);
+      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      break;
+    }
+    case 9:
+    {
+      currTarget = pushOP(ctx, currTarget, OP_push_this);
+      IridiumSEXP *loc = currStmt->args[0];
+      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      break;
+    }
+    case 10:
+    {
+      currTarget = pushOPConst(ctx, currTarget, OP_push_const, JS_UNINITIALIZED);
+      IridiumSEXP *loc = currStmt->args[0];
+      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      break;
+    }
+    case 11:
+    {
+      currTarget = pushOP(ctx, currTarget, OP_undefined);
+      IridiumSEXP *loc = currStmt->args[0];
+      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      break;
+    }
+    default:
+      fprintf(stderr, "TODO: OPID: %d for JSImplicitBindingDeclaration\n", OPID);
+      exit(1);
+      break;
+    }
+    return currTarget;
   }
   else if (isTag(currStmt, "JSMODULEMETAINIT"))
   {
@@ -1696,14 +1761,6 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     currTarget = pushOP8(ctx, currTarget, OP_special_object, 2);
     currTarget = pushOP(ctx, currTarget, OP_get_super);
-    IridiumSEXP *targetBinding = currStmt->args[0];
-    ensureTag(targetBinding, "EnvBinding");
-    int refIdx = getFlagNumber(targetBinding, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
-  }
-  else if (isTag(currStmt, "JSHOMEOBJ"))
-  {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 4);
     IridiumSEXP *targetBinding = currStmt->args[0];
     ensureTag(targetBinding, "EnvBinding");
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
@@ -1816,7 +1873,6 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     {
       fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
     }
-    
   }
   else if (isTag(currStmt, "JSSloppyDeclarationCheck"))
   {
@@ -1904,16 +1960,16 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       IridiumSEXP *tmpLoc = currStmt->args[4];
       currTarget = storeWhatevesOnTheStack(ctx, tmpLoc, currTarget, safe, thisInit, isStrict, false);
     }
-
   }
   else if (isTag(currStmt, "JSDefineObjProp"))
   {
-    IridiumSEXP *obj  = currStmt->args[0];
+    IridiumSEXP *obj = currStmt->args[0];
     currTarget = lowerToStack(ctx, currTarget, obj);
     IridiumSEXP *field = currStmt->args[1];
-    IridiumSEXP *val  = currStmt->args[2];
+    IridiumSEXP *val = currStmt->args[2];
 
-    if (isTag(field, "String")) {
+    if (isTag(field, "String"))
+    {
       currTarget = lowerToStack(ctx, currTarget, val);
       JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
       currTarget = pushOP32(ctx, currTarget, OP_define_field, fieldAtom);
@@ -1955,14 +2011,14 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       fprintf(stderr, "TODO: JSDefineObjMethod invalid flag\n");
       exit(1);
     }
-    
-    IridiumSEXP *obj  = currStmt->args[0];
+
+    IridiumSEXP *obj = currStmt->args[0];
     currTarget = lowerToStack(ctx, currTarget, obj);
     IridiumSEXP *field = currStmt->args[1];
-    IridiumSEXP *val  = currStmt->args[2];
+    IridiumSEXP *val = currStmt->args[2];
 
-    
-    if (isTag(field, "String")) {
+    if (isTag(field, "String"))
+    {
       currTarget = lowerToStack(ctx, currTarget, val);
       JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
       currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
@@ -2887,17 +2943,19 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     }
   }
 
-  if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+  if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
+  {
     fprintf(stdout, "[Iridium] Dumping all non-topLevel module code\n");
   }
-  
+
   for (int i = 0; i < numModules; i++)
   {
     if (i == topLevelModuleIdx)
       continue;
     JSValue funBC = moduleList[i];
     JSFunctionBytecode *b = (JSFunctionBytecode *)funBC.u.ptr;
-    if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+    if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
+    {
       js_dump_function_bytecode(ctx, b);
     }
   }
@@ -2930,7 +2988,8 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
   if (!isModule)
   {
-    if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+    if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
+    {
       js_dump_function_bytecode(ctx, b);
     }
     return ((IridiumLoadResult){false, b});
@@ -3055,7 +3114,8 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     }
   }
 
-  if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL)) {
+  if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
+  {
     fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
     js_dump_function_bytecode(ctx, b);
   }
