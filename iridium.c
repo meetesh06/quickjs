@@ -624,9 +624,7 @@ BCLList *storeWhatevesOnTheStack(JSContext* ctx, IridiumSEXP *loc, BCLList * cur
   // is lval global?
   if (isTag(loc, "GlobalBinding"))
   {
-    IridiumSEXP *gBindingName = loc->args[0];
-    assert(isTag(gBindingName, "String"));
-    char *name = getFlagString(gBindingName, "IridiumPrimitive");
+    char *name = getFlagString(loc, "NAME");
 
     if (safe)
     {
@@ -757,11 +755,11 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   }
   else if (isTag(rval, "GlobalBinding"))
   {
-    char *lookupVal = getFlagString(rval->args[0], "IridiumPrimitive");
+    char *lookupVal = getFlagString(rval, "NAME");
     if (strcmp(lookupVal, "undefined") == 0)
       return pushOP(ctx, currTarget, OP_undefined);
     else
-      return pushOP32(ctx, currTarget, OP_get_var, JS_NewAtom(ctx, getFlagString(rval->args[0], "IridiumPrimitive")));
+      return pushOP32(ctx, currTarget, OP_get_var, JS_NewAtom(ctx, lookupVal));
   }
   else if (isTag(rval, "CallSite"))
   {
@@ -1442,16 +1440,6 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   return currTarget;
 }
 
-bool isSimpleAssignment(IridiumSEXP *currStmt)
-{
-  return currStmt->numArgs == 2 && (isTag(currStmt->args[0], "EnvBinding") || isTag(currStmt->args[0], "RemoteEnvBinding"));
-}
-
-bool isGlobalAssignment(IridiumSEXP *currStmt)
-{
-  return currStmt->numArgs == 2 && isTag(currStmt->args[0], "GlobalBinding");
-}
-
 BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt, bool saveResToStack)
 {
   bool safe = getFlagBoolean(currStmt, "SAFE");
@@ -1465,63 +1453,6 @@ BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currSt
   currTarget = lowerToStack(ctx, currTarget, rval);
   // Store that something where its required
   return storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, saveResToStack);
-
-  // // is lval global?
-  // if (isTag(lval, "GlobalBinding"))
-  // {
-  //   IridiumSEXP *gBindingName = lval->args[0];
-  //   assert(isTag(gBindingName, "String"));
-  //   char *name = getFlagString(gBindingName, "IridiumPrimitive");
-  //   if (safe)
-  //   {
-  //     currTarget = lowerToStack(ctx, currTarget, rval);
-  //     currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
-  //   }
-  //   else if (isStrict)
-  //   {
-  //     currTarget = pushOP32(ctx, currTarget, OP_check_var, JS_NewAtom(ctx, name));
-  //     currTarget = lowerToStack(ctx, currTarget, rval);
-  //     if (saveResToStack)
-  //       currTarget = pushOP(ctx, currTarget, OP_insert2);
-  //     currTarget = pushOP32(ctx, currTarget, OP_put_var_strict, JS_NewAtom(ctx, name));
-  //   }
-  //   else
-  //   {
-  //     currTarget = lowerToStack(ctx, currTarget, rval);
-  //     if (saveResToStack)
-  //       currTarget = pushOP(ctx, currTarget, OP_dup);
-  //     currTarget = pushOP32(ctx, currTarget, OP_put_var, JS_NewAtom(ctx, name));
-  //   }
-  // }
-  // else
-  // {
-  //   currTarget = lowerToStack(ctx, currTarget, rval);
-  //   if (saveResToStack)
-  //     currTarget = pushOP(ctx, currTarget, OP_dup);
-
-  //   if (thisInit)
-  //   {
-  //     // This init only happens for locals...
-  //     assert(isTag(lval, "EnvBinding"));
-  //     int refIdx = getFlagNumber(lval, "REFIDX");
-  //     currTarget = pushOP16(ctx, currTarget, OP_put_loc_check_init, refIdx);
-  //   }
-  //   else if (isTag(lval, "RemoteEnvBinding"))
-  //   {
-  //     int refIdx = getFlagNumber(lval, "REFIDX");
-  //     currTarget = pushOP16(ctx, currTarget, safe ? OP_put_var_ref : OP_put_var_ref_check, refIdx);
-  //   }
-  //   else if (isTag(lval, "EnvBinding"))
-  //   {
-  //     int refIdx = getFlagNumber(lval, "REFIDX");
-  //     currTarget = pushOP16(ctx, currTarget, safe ? OP_put_loc : OP_put_loc_check, refIdx);
-  //   }
-  //   else
-  //   {
-  //     fprintf(stderr, "TODO: Unhandled LVal kind!!");
-  //     exit(1);
-  //   }
-  // }
 }
 
 BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
@@ -1559,30 +1490,6 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     // obj -> enum_obj iterator_method catch_offset
     return pushOP(ctx, currTarget, OP_for_of_start);
-
-    // currTarget = pushOP(ctx, currTarget, OP_swap);
-
-    // IridiumSEXP *methodStackLocation = currStmt->args[1];
-    // int methodStackLocationIDX = getFlagNumber(methodStackLocation, "REFIDX");
-    // if (isTag(methodStackLocation, "EnvBinding")) {
-    //   currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, methodStackLocationIDX);
-    // } else if (isTag(methodStackLocation, "RemoteEnvBinding")) {
-    //   currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, methodStackLocationIDX);
-    // } else {
-    //   fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-    // }
-
-    // currTarget = pushOP(ctx, currTarget, OP_swap);
-
-    // IridiumSEXP *methodItLocation = currStmt->args[2];
-    // int methodItLocationIDX = getFlagNumber(methodItLocation, "REFIDX");
-    // if (isTag(methodItLocation, "EnvBinding")) {
-    //   currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, methodItLocationIDX);
-    // } else if (isTag(methodItLocation, "RemoteEnvBinding")) {
-    //   currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, methodItLocationIDX);
-    // } else {
-    //   fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-    // }
   }
   else if (isTag(currStmt, "JSForInStart"))
   {
@@ -1807,20 +1714,12 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     currTarget = pushOP(ctx, currTarget, OP_to_object);
 
-    IridiumSEXP *stackLocation = currStmt->args[1];
-    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding"))
-    {
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
-    }
-    else if (isTag(stackLocation, "RemoteEnvBinding"))
-    {
-      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
-    }
-    else
-    {
-      fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
-    }
+    bool safe = getFlagBoolean(currStmt, "SAFE");
+    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
+
+    IridiumSEXP *loc = currStmt->args[1];
+    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
   }
   else if (isTag(currStmt, "JSPrivateFieldWrite"))
   {
@@ -1962,7 +1861,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     if (isTag(loc, "GlobalBinding"))
     {
-      char *name = getFlagString(loc->args[0], "IridiumPrimitive");
+      char *name = getFlagString(loc, "NAME");
       currTarget = pushOP32Flags(ctx, currTarget, OP_check_define_var, JS_NewAtom(ctx, name), 64);
       currTarget = lowerToStack(ctx, currTarget, closure);
       currTarget = pushOP32Flags(ctx, currTarget, OP_define_func, JS_NewAtom(ctx, name), 0);
@@ -2725,7 +2624,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
 
     int scope_level = getFlagNumber(envBinding, "Scope");
     int scope_next = getFlagNumber(envBinding, "ParentScope");
-    char *name = getFlagString(envBinding->args[0], "IridiumPrimitive");
+    char *name = getFlagString(envBinding, "NAME");
 
     b->vardefs[i].var_name = JS_NewAtom(ctx, name);
     b->vardefs[i].scope_level = scope_level;
@@ -2775,7 +2674,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
 
     ensureTag(next, "EnvBinding");
     IridiumSEXP *envBinding = next;
-    char *name = getFlagString(envBinding->args[0], "IridiumPrimitive");
+    char *name = getFlagString(envBinding, "NAME");
 
     b->closure_var[i].is_arg = false;
     b->closure_var[i].is_const = false;
