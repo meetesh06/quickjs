@@ -778,7 +778,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       assert(rval->numArgs >= 2);
       currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
       currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = pushOP(ctx, currTarget, OP_check_brand); // Ensure the function's home object's brand matches the brand of the current instance current instance.
+      currTarget = pushOP(ctx, currTarget, OP_check_brand); // Ensure the function's home object's brand matches the brand of the current instance.
       i = 2;
     }
 
@@ -1073,37 +1073,6 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 
     currTarget = pushOP(ctx, currTarget, OP_define_array_el);
     return pushOP(ctx, currTarget, OP_drop);
-  }
-
-  else if (isTag(rval, "JSObjectMethod"))
-  {
-    IridiumSEXP *val = rval->args[1];
-    currTarget = lowerToStack(ctx, currTarget, val);
-
-    IridiumSEXP *field = rval->args[0];
-    ensureTag(field, "String");
-    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-
-    uint8_t op_flag;
-    if (hasFlag(rval, "METHOD"))
-    {
-      op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
-    }
-    else if (hasFlag(rval, "GET"))
-    {
-      op_flag = OP_DEFINE_METHOD_GETTER | OP_DEFINE_METHOD_ENUMERABLE;
-    }
-    else if (hasFlag(rval, "SET"))
-    {
-      op_flag = OP_DEFINE_METHOD_SETTER | OP_DEFINE_METHOD_ENUMERABLE;
-    }
-    else
-    {
-      fprintf(stderr, "TODO: JSObjectMethod invalid flag\n");
-      exit(1);
-    }
-    currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
-    return currTarget;
   }
 
   else if (isTag(rval, "JSObject"))
@@ -1769,21 +1738,6 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     return pushOP(ctx, currTarget, OP_initial_yield);
   }
-  else if (isTag(currStmt, "JSClassMethodDefine"))
-  {
-    IridiumSEXP *where = currStmt->args[0];
-    currTarget = lowerToStack(ctx, currTarget, where);
-
-    IridiumSEXP *what = currStmt->args[2];
-    currTarget = lowerToStack(ctx, currTarget, what);
-
-    IridiumSEXP *field = currStmt->args[1];
-    ensureTag(field, "String");
-    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    uint8_t op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
-    currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
-    return currTarget;
-  }
   else if (isTag(currStmt, "JSCopyDataProperties"))
   {
     // exc_obj
@@ -1902,21 +1856,9 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       currTarget = lowerToStack(ctx, currTarget, closure);
       currTarget = pushOP32Flags(ctx, currTarget, OP_define_func, JS_NewAtom(ctx, name), 0);
     }
-    else if (isTag(loc, "RemoteEnvBinding"))
-    {
-      currTarget = lowerToStack(ctx, currTarget, closure);
-      int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref, refIdx);
-    }
-    else if (isTag(loc, "EnvBinding"))
-    {
-      currTarget = lowerToStack(ctx, currTarget, closure);
-      int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc, refIdx);
-    }
     else
     {
-      fprintf(stderr, "TODO: unhandled JSFuncDecl case\n");
+      fprintf(stderr, "TODO: unhandled JSFuncDecl case, expected a GlobalBinding\n");
       exit(1);
     }
   }
