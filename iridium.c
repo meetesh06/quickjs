@@ -1417,6 +1417,10 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
     return pushOP(ctx, currTarget, OP_add_brand);
   }
+  else if (isTag(rval, "JSCheckConstructor"))
+  {
+    return pushOP(ctx, currTarget, OP_check_ctor);
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1526,10 +1530,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     return pushOP(ctx, currTarget, OP_throw);
   }
-  else if (isTag(currStmt, "JSCheckConstructor"))
-  {
-    return pushOP(ctx, currTarget, OP_check_ctor);
-  }
+  
   else if (isTag(currStmt, "JSCatchContext"))
   {
     IridiumSEXP *loc = currStmt->args[0];
