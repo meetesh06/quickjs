@@ -643,22 +643,15 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
   }
   else
   {
-    if (thisInit)
-    {
-      // This init only happens for locals...
-      assert(isTag(loc, "EnvBinding"));
-      int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check_init, refIdx);
-    }
-    else if (isTag(loc, "RemoteEnvBinding"))
+    if (isTag(loc, "RemoteEnvBinding"))
     {
       int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, safe ? OP_put_var_ref : OP_put_var_ref_check, refIdx);
+      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref : OP_put_var_ref_check, refIdx);
     }
     else if (isTag(loc, "EnvBinding"))
     {
       int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, safe ? OP_put_loc : OP_put_loc_check, refIdx);
+      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_loc_check_init : safe ? OP_put_loc : OP_put_loc_check, refIdx);
     }
     else
     {
@@ -674,7 +667,12 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
 
 BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 {
-  if (isTag(rval, "String"))
+  if (isTag(rval, "JSToObject"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    return pushOP(ctx, currTarget, OP_to_object);
+  }
+  else if (isTag(rval, "String"))
   {
     char *data = getFlagString(rval, "IridiumPrimitive");
     JSAtom strAtom = JS_NewAtom(ctx, data);
@@ -1413,6 +1411,12 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 
     currTarget = pushOP(ctx, currTarget, OP_put_array_el); // Receiver Field Rval
   }
+  else if (isTag(rval, "JSADDBRAND"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+    return pushOP(ctx, currTarget, OP_add_brand);
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1442,10 +1446,25 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     currTarget = handleEnvWrite(ctx, currTarget, currStmt, false);
   }
-  else if (isTag(currStmt, "FieldWrite") || isTag(currStmt, "JSComputedFieldWrite"))
+  else if (isTag(currStmt, "FieldWrite") || isTag(currStmt, "JSComputedFieldWrite")) // Make fast cases for these too...
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt);
     return pushOP(ctx, currTarget, OP_drop);
+  }
+  else if (isTag(currStmt, "StackReject"))
+  {
+    if (currStmt->numArgs > 0) {
+      for (int i = 0; i < currStmt->numArgs; i++) {
+        currTarget = lowerToStack(ctx, currTarget, currStmt->args[i]);
+      }
+    }
+
+    int nVal = getFlagNumber(currStmt, "NVAL");
+    for (int i = 0; i < nVal; i++) {
+      currTarget = pushOP(ctx, currTarget, OP_drop);
+    }
+    
+    return currTarget;
   }
   else if (isTag(currStmt, "JSForInNext"))
   {
@@ -1501,12 +1520,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     loc = currStmt->args[1];
     currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
   }
-  else if (isTag(currStmt, "JSADDBRAND"))
-  {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
-    return pushOP(ctx, currTarget, OP_add_brand);
-  }
+  
   else if (isTag(currStmt, "Throw"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
@@ -1680,11 +1694,11 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
-  else if (isTag(currStmt, "CallSite"))
-  {
-    currTarget = lowerToStack(ctx, currTarget, currStmt);
-    return pushOP(ctx, currTarget, OP_drop);
-  }
+  // else if (isTag(currStmt, "CallSite"))
+  // {
+  //   currTarget = lowerToStack(ctx, currTarget, currStmt);
+  //   return pushOP(ctx, currTarget, OP_drop);
+  // }
   else if (isTag(currStmt, "JSSUPEROBJINIT"))
   {
     currTarget = pushOP8(ctx, currTarget, OP_special_object, 4);
@@ -1711,18 +1725,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
-  else if (isTag(currStmt, "JSToObject"))
-  {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = pushOP(ctx, currTarget, OP_to_object);
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    IridiumSEXP *loc = currStmt->args[1];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
-  }
+  
   else if (isTag(currStmt, "JSPrivateFieldWrite"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
