@@ -667,7 +667,15 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
 
 BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
 {
-  if (isTag(rval, "JSToObject"))
+  if (isTag(rval, "JSForInStart"))
+  {
+    // Push obj onto the stack
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+
+    // obj -> enum_obj
+    return pushOP(ctx, currTarget, OP_for_in_start);
+  }
+  else if (isTag(rval, "JSToObject"))
   {
     currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
     return pushOP(ctx, currTarget, OP_to_object);
@@ -1421,6 +1429,10 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     return pushOP(ctx, currTarget, OP_check_ctor);
   }
+  else if (isTag(rval, "StackPop"))
+  {
+    return currTarget;
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1454,6 +1466,15 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt);
     return pushOP(ctx, currTarget, OP_drop);
+  }
+  else if (isTag(currStmt, "StackRetain"))
+  {
+    if (currStmt->numArgs > 0) {
+      for (int i = 0; i < currStmt->numArgs; i++) {
+        currTarget = lowerToStack(ctx, currTarget, currStmt->args[i]);
+      }
+    }
+    return currTarget;
   }
   else if (isTag(currStmt, "StackReject"))
   {
@@ -1494,21 +1515,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     // obj -> enum_obj iterator_method catch_offset
     return pushOP(ctx, currTarget, OP_for_of_start);
   }
-  else if (isTag(currStmt, "JSForInStart"))
-  {
-    // Push obj onto the stack
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-
-    // obj -> enum_obj
-    currTarget = pushOP(ctx, currTarget, OP_for_in_start);
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    IridiumSEXP *loc = currStmt->args[1];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
-  }
+  
   else if (isTag(currStmt, "JSForOfNext"))
   {
     // [it, meth, off] -> [it, meth, off, result, done]
