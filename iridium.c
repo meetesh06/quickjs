@@ -1808,7 +1808,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
     }
   }
-  else if (isTag(currStmt, "JSSloppyDeclarationCheck"))
+  else if (isTag(currStmt, "JSSloppyDecl"))
   {
     uint8_t check_flag = 0, define_flag = 0;
 
@@ -1834,7 +1834,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     }
     else
     {
-      fprintf(stderr, "TODO: JSSloppyDeclarationCheck invalid flag config\n");
+      fprintf(stderr, "TODO: JSSloppyDecl invalid flag config\n");
       exit(1);
     }
 
