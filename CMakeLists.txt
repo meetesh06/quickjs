@@ -231,7 +231,7 @@ set(qjs_sources
     libunicode.c
     quickjs.c
     xsum.c
-    iridium2.cpp
+    iridium3.cpp
     cJSON.c
 )
 
@@ -297,30 +297,70 @@ target_link_libraries(qjsc qjs)
 # QuickJS CLI
 #
 
-add_executable(qjs_exe
+# QuickJS CLI - old version (iridium3.cpp)
+add_executable(qjs_old_exe
     gen/repl.c
     gen/standalone.c
     qjs.c
+    iridium.c  # Explicitly use iridium3.cpp
 )
-add_qjs_libc_if_needed(qjs_exe)
-add_static_if_needed(qjs_exe)
-set_target_properties(qjs_exe PROPERTIES
-    OUTPUT_NAME "qjs"
+
+add_qjs_libc_if_needed(qjs_old_exe)
+add_static_if_needed(qjs_old_exe)
+set_target_properties(qjs_old_exe PROPERTIES
+    OUTPUT_NAME "qjs_old"
 )
-target_compile_definitions(qjs_exe PRIVATE ${qjs_defines})
-target_link_libraries(qjs_exe qjs)
+target_compile_definitions(qjs_old_exe PRIVATE ${qjs_defines})
+target_link_libraries(qjs_old_exe qjs)
 if(NOT WIN32)
-    set_target_properties(qjs_exe PROPERTIES ENABLE_EXPORTS TRUE)
+    set_target_properties(qjs_old_exe PROPERTIES ENABLE_EXPORTS TRUE)
 endif()
+
+# QuickJS CLI - new version (iridium4.cpp)
+add_executable(qjs_new_exe
+    gen/repl.c
+    gen/standalone.c
+    qjs.c
+    iridium4.cpp  # Explicitly use iridium4.cpp
+)
+
+add_qjs_libc_if_needed(qjs_new_exe)
+add_static_if_needed(qjs_new_exe)
+set_target_properties(qjs_new_exe PROPERTIES
+    OUTPUT_NAME "qjs_new"
+)
+target_compile_definitions(qjs_new_exe PRIVATE ${qjs_defines})
+target_link_libraries(qjs_new_exe qjs)
+if(NOT WIN32)
+    set_target_properties(qjs_new_exe PROPERTIES ENABLE_EXPORTS TRUE)
+endif()
+
+
 if(QJS_BUILD_CLI_WITH_MIMALLOC OR QJS_BUILD_CLI_WITH_STATIC_MIMALLOC)
     find_package(mimalloc REQUIRED)
     # Upstream mimalloc doesn't provide a way to know if both libraries are supported.
     if(QJS_BUILD_CLI_WITH_STATIC_MIMALLOC)
-        target_link_libraries(qjs_exe mimalloc-static)
+        if(TARGET qjs_old_exe)
+            target_link_libraries(qjs_old_exe mimalloc-static)
+        endif()
+        if(TARGET qjs_new_exe)
+            target_link_libraries(qjs_new_exe mimalloc-static)
+        endif()
     else()
-        target_link_libraries(qjs_exe mimalloc)
+        if(TARGET qjs_old_exe)
+            target_link_libraries(qjs_old_exe mimalloc)
+        endif()
+        if(TARGET qjs_new_exe)
+            target_link_libraries(qjs_new_exe mimalloc)
+        endif()
     endif()
 endif()
+
+
+# Add an option to select which version to build
+option(BUILD_QJS_OLD "Build the old version (qjs_old)" OFF)
+option(BUILD_QJS_NEW "Build the new version (qjs_new)" ON)
+
 
 # Test262 runner
 #
@@ -432,7 +472,10 @@ if(NOT IOS)
     if(QJS_BUILD_LIBC)
         install(FILES quickjs-libc.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     endif()
-    install(TARGETS qjs_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    # install(TARGETS qjs_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS qjs_old_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS qjs_new_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
     install(TARGETS qjsc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(TARGETS qjs EXPORT qjsConfig
             RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

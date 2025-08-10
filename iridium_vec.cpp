@@ -1,4 +1,4 @@
-#include "./iridium.h"
+#include "iridium.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "cJSON.h"
@@ -7,6 +7,7 @@
 #include "./cutils.h"
 #include <assert.h>
 #include <ctype.h>
+#include <memory>
 
 #define JS_STACK_SIZE_MAX 65534
 
@@ -137,7 +138,7 @@ cJSON *load_json(const char *path)
 void populateArgs(IridiumSEXP *res, cJSON *args)
 {
   int argsNum = res->numArgs = cJSON_GetArraySize(args);
-  res->args = malloc(argsNum * sizeof(IridiumSEXP **));
+  res->args = (IridiumSEXP **)malloc(argsNum * sizeof(IridiumSEXP **));
   for (int i = 0; i < argsNum; ++i)
   {
     res->args[i] = parseIridiumSEXP(cJSON_GetArrayItem(args, i));
@@ -147,7 +148,7 @@ void populateArgs(IridiumSEXP *res, cJSON *args)
 void populateFlags(IridiumSEXP *res, cJSON *flags)
 {
   int flagsNum = res->numFlags = cJSON_GetArraySize(flags);
-  res->flags = malloc(flagsNum * sizeof(IridiumSEXP **));
+  res->flags = (IridiumFlag **)malloc(flagsNum * sizeof(IridiumSEXP **));
   for (int i = 0; i < flagsNum; ++i)
   {
     cJSON *flag = cJSON_GetArrayItem(flags, i);
@@ -160,7 +161,8 @@ void populateFlags(IridiumSEXP *res, cJSON *flags)
     char *flagName = cJSON_GetStringValue(cJSON_GetArrayItem(flag, 0));
     cJSON *flagVal = cJSON_GetArrayItem(flag, 1);
 
-    IridiumFlag *currFlag = malloc(sizeof(IridiumFlag));
+    // IridiumFlag *currFlag = malloc(sizeof(IridiumFlag));
+    IridiumFlag *currFlag = new IridiumFlag;//@@
     res->flags[i] = currFlag;
     currFlag->name = flagName;
 
@@ -190,7 +192,8 @@ void populateFlags(IridiumSEXP *res, cJSON *flags)
 
 IridiumSEXP *parseNode(char *tag, cJSON *args, cJSON *flags)
 {
-  IridiumSEXP *res = malloc(sizeof(IridiumSEXP));
+  // IridiumSEXP *res = malloc(sizeof(IridiumSEXP));
+  IridiumSEXP *res = new IridiumSEXP;//@@
   res->tag = tag;
   populateArgs(res, args);
   populateFlags(res, flags);
@@ -318,7 +321,8 @@ typedef struct BCLList
 // ============== Push OP ============== //
 BCLList *pushLabel(JSContext *ctx, BCLList *currTarget, int label)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = OP_nop;
@@ -334,7 +338,8 @@ BCLList *pushLabel(JSContext *ctx, BCLList *currTarget, int label)
 
 BCLList *push8(JSContext *ctx, BCLList *currTarget, uint8_t opcode)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = opcode;
@@ -350,7 +355,8 @@ BCLList *push8(JSContext *ctx, BCLList *currTarget, uint8_t opcode)
 
 BCLList *pushOP(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = opcode;
@@ -366,7 +372,8 @@ BCLList *pushOP(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode)
 
 BCLList *pushOP8(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint8_t data)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = opcode;
@@ -382,7 +389,8 @@ BCLList *pushOP8(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint8_t
 
 BCLList *pushOP16(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint16_t data)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = opcode;
@@ -398,7 +406,8 @@ BCLList *pushOP16(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint16
 
 BCLList *pushOP32(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint32_t data)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = opcode;
@@ -414,7 +423,8 @@ BCLList *pushOP32(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint32
 
 BCLList *pushOPConst(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, JSValue cData)
 {
-  currTarget->next = malloc(sizeof(BCLList));
+  // currTarget->next = malloc(sizeof(BCLList));
+  currTarget->next = new BCLList;//@@
   currTarget = currTarget->next;
   currTarget->next = NULL;
   currTarget->bc = opcode;
@@ -1964,14 +1974,14 @@ int compute_stack_size(JSContext *ctx, uint8_t *bc_buf, int bcSize)
   const JSOpCode *oi;
   s->bc_len = bcSize;
   /* bc_len > 0 */
-  s->stack_level_tab = js_malloc(ctx, sizeof(s->stack_level_tab[0]) *
+  s->stack_level_tab = (uint16_t *)js_malloc(ctx, sizeof(s->stack_level_tab[0]) *
                                           s->bc_len);
   if (!s->stack_level_tab)
     return -1;
   for (i = 0; i < s->bc_len; i++)
     s->stack_level_tab[i] = 0xffff;
   s->pc_stack = NULL;
-  s->catch_pos_tab = js_malloc(ctx, sizeof(s->catch_pos_tab[0]) * s->bc_len);
+  s->catch_pos_tab = (int32_t *)js_malloc(ctx, sizeof(s->catch_pos_tab[0]) * s->bc_len);
   if (!s->catch_pos_tab)
     goto fail;
 
@@ -2242,7 +2252,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   function_size += byte_code_len;
 
   // Allocate function object
-  JSFunctionBytecode *b = js_mallocz(ctx, function_size);
+  JSFunctionBytecode *b = (JSFunctionBytecode *)js_mallocz(ctx, function_size);
   if (!b)
   {
     fprintf(stderr, "Failed to generate QJS function from Iridium code");
@@ -2467,7 +2477,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 
   // dumpIridiumSEXP(stdout, file, 0);
 
-  JSValue *moduleList = malloc(node->numArgs * sizeof(JSValue));
+  JSValue *moduleList = (JSValue *)malloc(node->numArgs * sizeof(JSValue));
   int topLevelModuleIdx = -1;
 
   for (int i = 0; i < file->numArgs; ++i)
@@ -2482,7 +2492,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       topLevelModuleIdx = i;
     }
 
-    BCLList *bcTarget = malloc(sizeof(BCLList));
+    BCLList *bcTarget = new BCLList;//@@
     BCLList *startBC = bcTarget;
 
     bcTarget->next = NULL;
@@ -2593,7 +2603,6 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   }
 
   IridiumSEXP *iridiumCode = parseIridiumSEXP(code);
-  
   // Generate BC
   JSValue moduleFunVal = generateBytecode(ctx, iridiumCode);
 

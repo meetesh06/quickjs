@@ -1,0 +1,3 @@
+Thought process
+* Why does pushLabel introduce NOPs in the first place?
+* 

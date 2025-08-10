@@ -1,0 +1,126 @@
+Iri-v3
+ADDR: 0x60b07d9cf610
+function: <null>
+  mode: strict
+  locals:
+    0: const this
+  closure vars:
+    0: test5 local:loc0 var
+  stack_size: 1
+  byte_code_len: 23
+  opcodes: 11
+;; <TestFunc>
+
+        push_this      
+        if_false8       4
+        return_undef   
+    4:  push_this      
+        put_loc         0    ; this
+        push_const      0    ; uninitialized
+        put_var_ref     0    ; test5
+        fclosure8       1    ; undefined
+        put_var_ref     0    ; test5
+        undefined      
+        return_async   
+
+
+ADDR: 0x60b07d9cfa80
+function: <null>
+  mode: strict
+  locals:
+    0: const this [level:1 next:0]
+    1: var a [level:1 next:0]
+    2: var b [level:1 next:0]
+    3: var c [level:1 next:0]
+    4: var js3$2 [level:1 next:0]
+    5: var js3$1 [level:1 next:0]
+    6: var d [level:1 next:0]
+    7: var ccallCallee$4 [level:1 next:0]
+    8: var js3$8 [level:1 next:0]
+    9: var js3$9 [level:1 next:0]
+   10: var js3$7 [level:1 next:0]
+   11: var js3$10 [level:1 next:0]
+   12: var js3$6 [level:1 next:0]
+   13: var js3$11 [level:1 next:0]
+   14: var js3$5 [level:1 next:0]
+   15: var js3$3 [level:1 next:0]
+  stack_size: 0
+  byte_code_len: 253
+  opcodes: 73
+;; <TestFunc>
+
+        push_this      
+        put_loc         0    ; this
+        push_const      0    ; uninitialized
+        put_loc         15   ; js3$3
+        push_const      1    ; uninitialized
+        put_loc         14   ; js3$5
+        push_const      2    ; uninitialized
+        put_loc         13   ; js3$11
+        push_const      3    ; uninitialized
+        put_loc         12   ; js3$6
+        push_const      4    ; uninitialized
+        put_loc         11   ; js3$10
+        push_const      5    ; uninitialized
+        put_loc         10   ; js3$7
+        push_const      6    ; uninitialized
+        put_loc         9    ; js3$9
+        push_const      7    ; uninitialized
+        put_loc         8    ; js3$8
+        push_const      8    ; uninitialized
+        put_loc         7    ; ccallCallee$4
+        push_const      9    ; uninitialized
+        put_loc         6    ; d
+        push_const      10   ; uninitialized
+        put_loc         5    ; js3$1
+        push_const      11   ; uninitialized
+        put_loc         4    ; js3$2
+        push_const      12   ; uninitialized
+        put_loc         3    ; c
+        push_const      13   ; uninitialized
+        put_loc         2    ; b
+        push_const      14   ; uninitialized
+        put_loc         1    ; a
+        push_const      15   ; 0
+        put_loc         1    ; a
+        push_const      16   ; 1
+        put_loc         2    ; b
+        push_const      17   ; 2
+        put_loc         3    ; c
+        push_const      18   ; 1
+        put_loc         4    ; js3$2
+        get_loc_check   4    ; js3$2
+        neg            
+        put_loc         5    ; js3$1
+        get_loc_check   5    ; js3$1
+        put_loc         6    ; d
+        get_var         console
+        get_field       log
+        put_loc         7    ; ccallCallee$4
+        get_loc_check   1    ; a
+        put_loc         8    ; js3$8
+        get_loc_check   2    ; b
+        put_loc         9    ; js3$9
+        get_loc_check   8    ; js3$8
+        get_loc_check   9    ; js3$9
+        add            
+        put_loc         10   ; js3$7
+        get_loc_check   3    ; c
+        put_loc         11   ; js3$10
+        get_loc_check   10   ; js3$7
+        get_loc_check   11   ; js3$10
+        add            
+        put_loc         12   ; js3$6
+        get_loc_check   6    ; d
+        put_loc         13   ; js3$11
+        get_loc_check   12   ; js3$6
+        get_loc_check   13   ; js3$11
+        add            
+        put_loc         14   ; js3$5
+        get_var         console
+        get_loc_check   7    ; ccallCallee$4
+        get_loc_check   14   ; js3$5
+        call_method     1
+        put_loc         15   ; js3$3
+
+
