@@ -646,12 +646,16 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
     if (isTag(loc, "RemoteEnvBinding"))
     {
       int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref : OP_put_var_ref_check, refIdx);
+      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref
+                                                                                         : OP_put_var_ref_check,
+                            refIdx);
     }
     else if (isTag(loc, "EnvBinding"))
     {
       int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_loc_check_init : safe ? OP_put_loc : OP_put_loc_check, refIdx);
+      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_loc_check_init : safe ? OP_put_loc
+                                                                                     : OP_put_loc_check,
+                            refIdx);
     }
     else
     {
@@ -659,6 +663,84 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
       exit(1);
     }
   }
+
+  return currTarget;
+}
+
+// Gemini 2.5 pro, got it right, maybe...
+BCLList *keepNDropM(JSContext *ctx, BCLList *currTarget, int N, int M)
+{
+  // If M is zero or negative, no elements need to be dropped.
+  if (M <= 0)
+  {
+    return currTarget;
+  }
+
+  // If N is negative, it's an invalid input. Do nothing.
+  if (N < 0)
+  {
+    fprintf(stderr, "TODO: keepMDropN, invalid input !!");
+    exit(1);
+  }
+
+  if (N == 2 && M == 1)
+  {
+    currTarget = pushOP(ctx, currTarget, OP_nip1);
+    return currTarget;
+  }
+  fprintf(stderr, "TODO: keepMDropN, handle general case, validate code!!");
+  exit(1);
+
+  // Validate the logic for correctness first...
+  // printf("Executing general path for N=%d, M=%d:\n", N, M);
+  // // General case: Loop M times, each time dropping the element at depth N+1.
+  // for (int i = 0; i < M; ++i)
+  // {
+  //   // The depth of the element to drop is always N+1 relative to the
+  //   // block of N elements we are preserving.
+  //   const int depth_to_drop = N + 1;
+
+  //   switch (depth_to_drop)
+  //   {
+  //   case 1:
+  //     // Keep 0, drop 1. This is a simple drop.
+  //     currTarget = pushOP(ctx, currTarget, OP_drop);
+  //     break;
+  //   case 2:
+  //     // Keep 1, drop 1. The element to drop is at depth 2.
+  //     // This is what `nip` does.
+  //     currTarget = pushOP(ctx, currTarget, OP_nip);
+  //     break;
+  //   case 3:
+  //     // Keep 2, drop 1. The element to drop is at depth 3.
+  //     // This is what `nip1` does.
+  //     currTarget = pushOP(ctx, currTarget, OP_nip1);
+  //     break;
+  //   case 4:
+  //     // Keep 3, drop 1. The element to drop is at depth 4.
+  //     // We achieve this by moving the 4th element to the top (`rot4l`)
+  //     // and then dropping it (`drop`).
+  //     currTarget = pushOP(ctx, currTarget, OP_rot4l);
+  //     currTarget = pushOP(ctx, currTarget, OP_drop);
+  //     break;
+  //   case 5:
+  //     // Keep 4, drop 1. The element to drop is at depth 5.
+  //     // We achieve this by moving the 5th element to the top (`rot5l`)
+  //     // and then dropping it (`drop`).
+  //     currTarget = pushOP(ctx, currTarget, OP_rot5l);
+  //     currTarget = pushOP(ctx, currTarget, OP_drop);
+  //     break;
+  //   default:
+  //     // The provided primitives do not support direct manipulation
+  //     // of elements at depths greater than 5. Therefore, a general
+  //     // solution for N > 4 is not possible with this instruction set.
+  //     // In a real compiler, you might emit a call to a runtime
+  //     // helper function or raise a compile-time error.
+  //     fprintf(stderr, "Error: Cannot keepNDropM for N=%d. Operation not supported for depths > 5.\n", N);
+  //     // Returning without emitting any more opcodes for this drop operation.
+  //     break;
+  //   }
+  // }
 
   return currTarget;
 }
@@ -1433,6 +1515,32 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   {
     return currTarget;
   }
+  else if (isTag(rval, "JSForInNext"))
+  {
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    currTarget = pushOP(ctx, currTarget, OP_for_in_next);
+
+    currTarget = keepNDropM(ctx, currTarget, 2, 1);
+
+    return currTarget;
+  }
+  else if (isTag(rval, "JSForOfStart"))
+  {
+    // Push obj onto the stack
+    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+
+    // obj -> enum_obj iterator_method catch_offset
+    return pushOP(ctx, currTarget, OP_for_of_start);
+  }
+  else if (isTag(rval, "JSForOfNext"))
+  {
+    // [it, meth, off] -> [it, meth, off, result, done]
+    return pushOP16(ctx, currTarget, OP_for_of_next, 0);
+  }
+  else if (isTag(rval, "JSForOfIteratorClose"))
+  {
+    return pushOP(ctx, currTarget, OP_iterator_close);
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1469,8 +1577,10 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   }
   else if (isTag(currStmt, "StackRetain"))
   {
-    if (currStmt->numArgs > 0) {
-      for (int i = 0; i < currStmt->numArgs; i++) {
+    if (currStmt->numArgs > 0)
+    {
+      for (int i = 0; i < currStmt->numArgs; i++)
+      {
         currTarget = lowerToStack(ctx, currTarget, currStmt->args[i]);
       }
     }
@@ -1478,66 +1588,28 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   }
   else if (isTag(currStmt, "StackReject"))
   {
-    if (currStmt->numArgs > 0) {
-      for (int i = 0; i < currStmt->numArgs; i++) {
+    if (currStmt->numArgs > 0)
+    {
+      for (int i = 0; i < currStmt->numArgs; i++)
+      {
         currTarget = lowerToStack(ctx, currTarget, currStmt->args[i]);
       }
     }
 
     int nVal = getFlagNumber(currStmt, "NVAL");
-    for (int i = 0; i < nVal; i++) {
+    for (int i = 0; i < nVal; i++)
+    {
       currTarget = pushOP(ctx, currTarget, OP_drop);
     }
-    
+
     return currTarget;
   }
-  else if (isTag(currStmt, "JSForInNext"))
-  {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = pushOP(ctx, currTarget, OP_for_in_next);
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    IridiumSEXP *loc = currStmt->args[1];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
-
-    loc = currStmt->args[2];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
-    return pushOP(ctx, currTarget, OP_drop); // drop enum_obj
-  }
-  else if (isTag(currStmt, "JSForOfStart"))
-  {
-    // Push obj onto the stack
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-
-    // obj -> enum_obj iterator_method catch_offset
-    return pushOP(ctx, currTarget, OP_for_of_start);
-  }
-  
-  else if (isTag(currStmt, "JSForOfNext"))
-  {
-    // [it, meth, off] -> [it, meth, off, result, done]
-    currTarget = pushOP16(ctx, currTarget, OP_for_of_next, 0);
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    IridiumSEXP *loc = currStmt->args[0];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
-
-    loc = currStmt->args[1];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
-  }
-  
   else if (isTag(currStmt, "Throw"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
     return pushOP(ctx, currTarget, OP_throw);
   }
-  
+
   else if (isTag(currStmt, "JSCatchContext"))
   {
     IridiumSEXP *loc = currStmt->args[0];
@@ -1733,7 +1805,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
     return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
   }
-  
+
   else if (isTag(currStmt, "JSPrivateFieldWrite"))
   {
     currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
@@ -1771,10 +1843,6 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     currTarget = pushOP(ctx, currTarget, OP_drop);
     return pushOP(ctx, currTarget, OP_drop);
-  }
-  else if (isTag(currStmt, "JSForOfIteratorClose"))
-  {
-    return pushOP(ctx, currTarget, OP_iterator_close);
   }
   else if (isTag(currStmt, "Ret"))
   {
