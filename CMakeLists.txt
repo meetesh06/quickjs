@@ -324,6 +324,16 @@ add_executable(qjs_new_exe
     iridium4.cpp  # Explicitly use iridium4.cpp
 )
 
+set(qjs_sources
+    cutils.c
+    libregexp.c
+    libunicode.c
+    quickjs.c
+    xsum.c
+    iridium3.cpp
+    cJSON.c
+)
+
 add_qjs_libc_if_needed(qjs_new_exe)
 add_static_if_needed(qjs_new_exe)
 set_target_properties(qjs_new_exe PROPERTIES

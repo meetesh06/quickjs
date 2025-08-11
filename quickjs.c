@@ -11626,7 +11626,7 @@ static const js_limb_t js_pow_dec[JS_LIMB_DIGITS + 1] = {
 
 /* syntax: [-]digits in base radix. Return NULL if memory error. radix
    = 10, 2, 8 or 16. */
-static JSBigInt *js_bigint_from_string(JSContext *ctx,
+JSBigInt *js_bigint_from_string(JSContext *ctx,
                                        const char *str, int radix)
 {
     const char *p = str;
@@ -11880,7 +11880,7 @@ static JSValue js_bigint_to_string1(JSContext *ctx, JSValueConst val, int radix)
 
 /* if possible transform a BigInt to short big and free it, otherwise
    return a normal bigint */
-static JSValue JS_CompactBigInt(JSContext *ctx, JSBigInt *p)
+JSValue JS_CompactBigInt(JSContext *ctx, JSBigInt *p)
 {
     JSValue res;
     if (p->len == 1) {

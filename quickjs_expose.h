@@ -346,6 +346,18 @@ extern "C"
 
   void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b);
 
+  typedef uint32_t js_limb_t;
+  typedef struct JSBigInt
+  {
+    JSRefCountHeader header; /* must come first, 32-bit */
+    uint32_t len;            /* number of limbs, >= 1 */
+    js_limb_t tab[];         /* two's complement representation, always
+                                normalized so that 'len' is the minimum
+                                possible length >= 1 */
+  } JSBigInt;
+  JSValue JS_CompactBigInt(JSContext *ctx, JSBigInt *p);
+  JSBigInt *js_bigint_from_string(JSContext *ctx, const char *str, int radix);
+
 #ifdef __cplusplus
 }
 #endif
