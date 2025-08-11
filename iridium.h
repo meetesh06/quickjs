@@ -41,6 +41,9 @@ IridiumSEXP *parseIridiumSEXP(cJSON *node);
 // Given a path to a file, parse and load iridium code
 void eval_iri_file(JSContext *ctx, const char *filename);
 
+// Given a path to an iridium pika bundle, parse, load and execute
+void eval_iri_pika(JSContext *ctx, const char *filename);
+
 // Some basic bit operations
 void setBit(int bitIndex, int *value);
 void clearBit(int bitIndex, int *value);
