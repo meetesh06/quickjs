@@ -231,7 +231,7 @@ set(qjs_sources
     libunicode.c
     quickjs.c
     xsum.c
-    iridium3.cpp
+    iridium.cpp
     cJSON.c
 )
 

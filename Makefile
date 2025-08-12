@@ -25,17 +25,10 @@
 # THE SOFTWARE.
 
 BUILD_DIR=build
-BUILD_TYPE?=debug
+BUILD_TYPE?=Release
 INSTALL_PREFIX?=/usr/local
 
-# Version selection options
-BUILD_QJS_OLD?=0
-BUILD_QJS_NEW?=1
-
-# Executable paths
-QJS_OLD=$(BUILD_DIR)/qjs_old
-QJS_NEW=$(BUILD_DIR)/qjs_new
-QJS=$(BUILD_DIR)/qjs  # Default version (points to QJS_NEW)
+QJS=$(BUILD_DIR)/qjs
 QJSC=$(BUILD_DIR)/qjsc
 RUN262=$(BUILD_DIR)/run-test262
 
@@ -50,29 +43,7 @@ ifeq ($(JOBS),)
 JOBS := 4
 endif
 
-# Default target builds the selected version(s)
-all: $(BUILD_DIR)
-ifeq ($(BUILD_QJS_OLD),1)
-	cmake --build $(BUILD_DIR) --target qjs_old_exe -j $(JOBS)
-endif
-ifeq ($(BUILD_QJS_NEW),1)
-	cmake --build $(BUILD_DIR) --target qjs_new_exe -j $(JOBS)
-endif
-
-# Individual version targets
-qjs_old: $(BUILD_DIR)
-	cmake --build $(BUILD_DIR) --target qjs_old_exe -j $(JOBS)
-
-qjs_new: $(BUILD_DIR)
-	cmake --build $(BUILD_DIR) --target qjs_new_exe -j $(JOBS)
-
-# Symlink qjs to the default version (qjs_new)
-$(QJS): $(BUILD_DIR)
-ifeq ($(BUILD_QJS_NEW),1)
-	ln -sf qjs_new $@
-else ifeq ($(BUILD_QJS_OLD),1)
-	ln -sf qjs_old $@
-endif
+all: $(QJS)
 
 amalgam: TEMP := $(shell mktemp -d)
 amalgam: $(QJS)
@@ -90,10 +61,13 @@ fuzz:
 $(BUILD_DIR):
 	cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DCMAKE_INSTALL_PREFIX=$(INSTALL_PREFIX)
 
+$(QJS): $(BUILD_DIR)
+	cmake --build $(BUILD_DIR) -j $(JOBS)
+
 $(QJSC): $(BUILD_DIR)
 	cmake --build $(BUILD_DIR) --target qjsc -j $(JOBS)
 
-install: $(BUILD_DIR)
+install: $(QJS) $(QJSC)
 	cmake --build $(BUILD_DIR) --target install
 
 clean:
@@ -170,4 +144,4 @@ unicode_gen: $(BUILD_DIR)
 libunicode-table.h: unicode_gen
 	$(BUILD_DIR)/unicode_gen unicode $@
 
-.PHONY: all amalgam ctest cxxtest debug fuzz jscheck install clean codegen distclean stats test test262 test262-update test262-check microbench unicode_gen qjs_old qjs_new
+.PHONY: all amalgam ctest cxxtest debug fuzz jscheck install clean codegen distclean stats test test262 test262-update test262-check microbench unicode_gen $(QJS) $(QJSC)
