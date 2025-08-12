@@ -1660,6 +1660,11 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
     }
   }
+  else if (isTag(rval, "JSCatchContext"))
+  {
+    // Do nothing
+    return;
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -1853,13 +1858,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   // {
   //   return pushOP(ctx, instructions, OP_check_ctor);
   // }
-  else if (isTag(currStmt, "JSCatchContext"))
-  {
-    IridiumSEXP *loc = currStmt->args[0];
-    ensureTag(loc, "EnvBinding");
-    int refIdx = getFlagNumber(loc, "REFIDX");
-    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
-  }
+  
   // else if (isTag(currStmt, "PushForOfCatchContext"))
   // {
   //   return lowerToStack(ctx, instructions, currStmt->args[0]);
