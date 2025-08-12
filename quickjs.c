@@ -640,6 +640,8 @@ typedef enum JSFunctionKindEnum {
 
 typedef struct JSFunctionBytecode {
     JSGCObjectHeader header; /* must come first */
+    // Used for garbage collection, has a ref_count and other relvenat fields.
+
     uint8_t is_strict_mode : 1;
     uint8_t has_prototype : 1; /* true if a prototype field is necessary */
     uint8_t has_simple_parameter_list : 1;
@@ -15934,6 +15936,14 @@ static JSVarRef *get_var_ref(JSContext *ctx, JSStackFrame *sf,
     return var_ref;
 }
 
+/*
+Takes a JS function object (func_obj) and its associated bytecode (b).
+For each variable captured by the function (from an outer scope):
+    Finds or reuses a JSVarRef, depending on whether it’s local or non-local.
+Stores all of these in the function’s internal var_refs array.
+This array will later be used by the function when executed, allowing closures to access the right variables.
+*/
+
 static JSValue js_closure2(JSContext *ctx, JSValue func_obj,
                            JSFunctionBytecode *b,
                            JSVarRef **cur_var_refs,
@@ -15974,6 +15984,10 @@ static JSValue js_closure2(JSContext *ctx, JSValue func_obj,
     return JS_EXCEPTION;
 }
 
+/*
+When a JS function is created in QuickJS and marked as having a prototype, the actual .prototype object is not created immediately.
+Instead, it's created lazily (on first access) by this function.
+*/
 static JSValue js_instantiate_prototype(JSContext *ctx, JSObject *p, JSAtom atom, void *opaque)
 {
     JSValue obj, this_val;
@@ -16002,6 +16016,13 @@ static const uint16_t func_kind_to_class_id[] = {
     [JS_FUNC_ASYNC_GENERATOR] = JS_CLASS_ASYNC_GENERATOR_FUNCTION,
 };
 
+/*
+This function:
+    - Takes a compiled function bytecode object (bfunc).
+    - Wraps it in a runtime function object (func_obj).
+    - Binds its enclosing scope (variable references).
+    - Sets up appropriate prototype properties (especially for generators and constructors.
+*/
 static JSValue js_closure(JSContext *ctx, JSValue bfunc,
                           JSVarRef **cur_var_refs,
                           JSStackFrame *sf)

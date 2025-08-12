@@ -1,12 +1,21 @@
-#include "./iridium.h"
 #include <stdio.h>
 #include <stdlib.h>
+extern "C"
+{
 #include "cJSON.h"
+#include "iridium.h"
 #include "./quickjs_expose.h"
 #include "./quickjs-opcode.h"
 #include "./cutils.h"
+}
 #include <assert.h>
 #include <ctype.h>
+#include <memory>
+#include <vector>
+#include <iterator>
+#include <unordered_set>
+#include <iostream>
+using namespace std;
 
 #define check_dump_flag(ctx, flag) ((JS_GetDumpFlags(ctx->rt) & (flag + 0)) == (flag + 0))
 
@@ -144,7 +153,7 @@ cJSON *load_json(const char *path)
 void populateArgs(IridiumSEXP *res, cJSON *args)
 {
   int argsNum = res->numArgs = cJSON_GetArraySize(args);
-  res->args = malloc(argsNum * sizeof(IridiumSEXP **));
+  res->args = (IridiumSEXP **)malloc(argsNum * sizeof(IridiumSEXP **));
   for (int i = 0; i < argsNum; ++i)
   {
     res->args[i] = parseIridiumSEXP(cJSON_GetArrayItem(args, i));
@@ -154,7 +163,7 @@ void populateArgs(IridiumSEXP *res, cJSON *args)
 void populateFlags(IridiumSEXP *res, cJSON *flags)
 {
   int flagsNum = res->numFlags = cJSON_GetArraySize(flags);
-  res->flags = malloc(flagsNum * sizeof(IridiumSEXP **));
+  res->flags = (IridiumFlag **)malloc(flagsNum * sizeof(IridiumSEXP **));
   for (int i = 0; i < flagsNum; ++i)
   {
     cJSON *flag = cJSON_GetArrayItem(flags, i);
@@ -167,7 +176,8 @@ void populateFlags(IridiumSEXP *res, cJSON *flags)
     char *flagName = cJSON_GetStringValue(cJSON_GetArrayItem(flag, 0));
     cJSON *flagVal = cJSON_GetArrayItem(flag, 1);
 
-    IridiumFlag *currFlag = malloc(sizeof(IridiumFlag));
+    // IridiumFlag *currFlag = malloc(sizeof(IridiumFlag));
+    IridiumFlag *currFlag = new IridiumFlag; //@@
     res->flags[i] = currFlag;
     currFlag->name = flagName;
 
@@ -197,7 +207,8 @@ void populateFlags(IridiumSEXP *res, cJSON *flags)
 
 IridiumSEXP *parseNode(char *tag, cJSON *args, cJSON *flags)
 {
-  IridiumSEXP *res = malloc(sizeof(IridiumSEXP));
+  // IridiumSEXP *res = malloc(sizeof(IridiumSEXP));
+  IridiumSEXP *res = new IridiumSEXP; //@@
   res->tag = tag;
   populateArgs(res, args);
   populateFlags(res, flags);
@@ -208,6 +219,7 @@ IridiumSEXP *parseIridiumSEXP(cJSON *node)
 {
   if (cJSON_IsArray(node))
   {
+    // node->tagPtr->args->flags
     cJSON *tagPtr = node->child;
     char *tag;
     if (!cJSON_IsString(tagPtr))
@@ -305,7 +317,6 @@ void dumpIridiumSEXP(FILE *target, IridiumSEXP *node, int space)
 //
 typedef struct BCLList
 {
-  struct BCLList *next;
   uint8_t bc;
   bool lambdaPoolReference;
   bool hasPoolData;
@@ -322,167 +333,160 @@ typedef struct BCLList
   bool hasFlags;
   uint8_t flags;
   // Extend the data structure to accomodate arguments dynamically
-} BCLList;
+} BCInstruction;
 
 // ============== Push OP ============== //
-BCLList *pushLabel(JSContext *ctx, BCLList *currTarget, int label)
+void pushLabel(JSContext *ctx, vector<BCInstruction> &instructions, int label)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = OP_nop;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = true;
-  currTarget->label = label;
-  currTarget->valueSize = 0;
-  currTarget->data.four = 0;
-  currTarget->hasFlags = false;
-  currTarget->flags = 0;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = OP_nop;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = true;
+  inst.label = label;
+  inst.valueSize = 0;
+  inst.data.four = 0;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  instructions.push_back(inst);
+  return;
 }
 
-// BCLList *push8(JSContext *ctx, BCLList *currTarget, uint8_t opcode)
+// void push8(JSContext *ctx, vector<BCInstruction> &instructions, uint8_t opcode)
 // {
-//   currTarget->next = malloc(sizeof(BCLList));
-//   currTarget = currTarget->next;
-//   currTarget->next = NULL;
-//   currTarget->bc = opcode;
-//   currTarget->lambdaPoolReference = false;
-//   currTarget->hasPoolData = false;
-//   currTarget->poolData = JS_UNINITIALIZED;
-//   currTarget->isLabel = false;
-//   currTarget->label = 0;
-//   currTarget->valueSize = 0;
-//   currTarget->data.four = 0;
-//   return currTarget;
+//   BCInstruction inst;
+//   inst.bc = opcode;
+//   inst.lambdaPoolReference = false;
+//   inst.hasPoolData = false;
+//   inst.poolData = JS_UNINITIALIZED;
+//   inst.isLabel = false;
+//   inst.label = 0;
+//   inst.valueSize = 0;
+//   inst.data.four = 0;
+//   instructions.push_back(inst);
+//   return;
 // }
 
-BCLList *pushOP(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode)
+void pushOP(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 0;
-  currTarget->data.four = 0;
-  currTarget->hasFlags = false;
-  currTarget->flags = 0;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 0;
+  inst.data.four = 0;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  instructions.push_back(inst);
+  return;
 }
 
-BCLList *pushOPFlags(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint8_t flags)
+void pushOPFlags(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode, uint8_t flags)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 0;
-  currTarget->data.four = 0;
-  currTarget->hasFlags = true;
-  currTarget->flags = flags;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 0;
+  inst.data.four = 0;
+  inst.hasFlags = true;
+  inst.flags = flags;
+  instructions.push_back(inst);
+  return;
 }
 
-BCLList *pushOP8(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint8_t data)
+void pushOP8(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode, uint8_t data)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 1;
-  currTarget->data.one = data;
-  currTarget->hasFlags = false;
-  currTarget->flags = 0;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 1;
+  inst.data.one = data;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  instructions.push_back(inst);
+  return;
 }
 
-BCLList *pushOP16(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint16_t data)
+void pushOP16(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode, uint16_t data)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 2;
-  currTarget->data.two = data;
-  currTarget->hasFlags = false;
-  currTarget->flags = 0;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 2;
+  inst.data.two = data;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  instructions.push_back(inst);
+  return;
 }
 
-BCLList *pushOP32(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint32_t data)
+void pushOP32(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode, uint32_t data)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 4;
-  currTarget->data.four = data;
-  currTarget->hasFlags = false;
-  currTarget->flags = 0;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 4;
+  inst.data.four = data;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  instructions.push_back(inst);
+  return;
 }
 
-BCLList *pushOP32Flags(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, uint32_t data, uint8_t flags)
+void pushOP32Flags(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode, uint32_t data, uint8_t flags)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = false;
-  currTarget->poolData = JS_UNINITIALIZED;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 4;
-  currTarget->data.four = data;
-  currTarget->hasFlags = true;
-  currTarget->flags = flags;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = false;
+  inst.poolData = JS_UNINITIALIZED;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 4;
+  inst.data.four = data;
+  inst.hasFlags = true;
+  inst.flags = flags;
+  instructions.push_back(inst);
+  return;
 }
 
-BCLList *pushOPConst(JSContext *ctx, BCLList *currTarget, OPCodeEnum opcode, JSValue cData)
+void pushOPConst(JSContext *ctx, vector<BCInstruction> &instructions, OPCodeEnum opcode, JSValue cData)
 {
-  currTarget->next = malloc(sizeof(BCLList));
-  currTarget = currTarget->next;
-  currTarget->next = NULL;
-  currTarget->bc = opcode;
-  currTarget->lambdaPoolReference = false;
-  currTarget->hasPoolData = true;
-  currTarget->poolData = cData;
-  currTarget->isLabel = false;
-  currTarget->label = 0;
-  currTarget->valueSize = 4;
-  currTarget->data.four = 0;
-  currTarget->hasFlags = false;
-  currTarget->flags = 0;
-  return currTarget;
+  BCInstruction inst;
+  inst.bc = opcode;
+  inst.lambdaPoolReference = false;
+  inst.hasPoolData = true;
+  inst.poolData = cData;
+  inst.isLabel = false;
+  inst.label = 0;
+  inst.valueSize = 4;
+  inst.data.four = 0;
+  inst.hasFlags = false;
+  inst.flags = 0;
+  instructions.push_back(inst);
+  return;
 }
 
 // ============== Push OP ============== //
@@ -503,7 +507,7 @@ void ensureTag(IridiumSEXP *node, const char *const tag)
   }
 }
 
-bool hasFlag(IridiumSEXP *node, char *flagToCheck)
+bool hasFlag(IridiumSEXP *node, const char *flagToCheck)
 {
   for (int i = 0; i < node->numFlags; i++)
   {
@@ -514,7 +518,7 @@ bool hasFlag(IridiumSEXP *node, char *flagToCheck)
   return false;
 }
 
-void ensureFlag(IridiumSEXP *node, char *flag)
+void ensureFlag(IridiumSEXP *node, const char *flag)
 {
   if (!hasFlag(node, flag))
   {
@@ -535,7 +539,7 @@ IridiumFlag *getFlag(IridiumSEXP *node, const char *const flagToCheck)
   exit(1);
 }
 
-int getFlagNumber(IridiumSEXP *binding, char *flagName)
+int getFlagNumber(IridiumSEXP *binding, const char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == NUMBER)
@@ -546,7 +550,7 @@ int getFlagNumber(IridiumSEXP *binding, char *flagName)
   exit(1);
 }
 
-double getFlagDouble(IridiumSEXP *binding, char *flagName)
+double getFlagDouble(IridiumSEXP *binding, const char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == NUMBER)
@@ -557,7 +561,7 @@ double getFlagDouble(IridiumSEXP *binding, char *flagName)
   exit(1);
 }
 
-char *getFlagString(IridiumSEXP *binding, char *flagName)
+char *getFlagString(IridiumSEXP *binding, const char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == STRING)
@@ -568,7 +572,7 @@ char *getFlagString(IridiumSEXP *binding, char *flagName)
   exit(1);
 }
 
-bool getFlagBoolean(IridiumSEXP *binding, char *flagName)
+bool getFlagBoolean(IridiumSEXP *binding, const char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == BOOLEAN)
@@ -579,7 +583,7 @@ bool getFlagBoolean(IridiumSEXP *binding, char *flagName)
   exit(1);
 }
 
-int getFlagNull(IridiumSEXP *binding, char *flagName)
+int getFlagNull(IridiumSEXP *binding, const char *flagName)
 {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == NULLPTR)
@@ -593,7 +597,7 @@ int getFlagNull(IridiumSEXP *binding, char *flagName)
 
 // ============== Code Generation ============== //
 
-BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt, bool saveResToStack);
+void handleEnvWrite(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *currStmt, bool saveResToStack);
 
 int parse_arg_index(const char *str)
 {
@@ -616,10 +620,10 @@ int parse_arg_index(const char *str)
 
 // ============== Misc ============== //
 
-BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *currTarget, bool safe, bool thisInit, bool isStrict, bool saveResToStack)
+void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruction> &instructions, bool safe, bool thisInit, bool isStrict, bool saveResToStack)
 {
   if (saveResToStack)
-    currTarget = pushOP(ctx, currTarget, OP_dup);
+    pushOP(ctx, instructions, OP_dup);
 
   // is lval global?
   if (isTag(loc, "GlobalBinding"))
@@ -628,17 +632,17 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
 
     if (safe)
     {
-      currTarget = pushOP32(ctx, currTarget, OP_put_var_init, JS_NewAtom(ctx, name));
+      pushOP32(ctx, instructions, OP_put_var_init, JS_NewAtom(ctx, name));
     }
     else if (isStrict)
     {
-      currTarget = pushOP32(ctx, currTarget, OP_check_var, JS_NewAtom(ctx, name));
-      currTarget = pushOP(ctx, currTarget, OP_swap);
-      currTarget = pushOP32(ctx, currTarget, OP_put_var_strict, JS_NewAtom(ctx, name));
+      pushOP32(ctx, instructions, OP_check_var, JS_NewAtom(ctx, name));
+      pushOP(ctx, instructions, OP_swap);
+      pushOP32(ctx, instructions, OP_put_var_strict, JS_NewAtom(ctx, name));
     }
     else
     {
-      currTarget = pushOP32(ctx, currTarget, OP_put_var, JS_NewAtom(ctx, name));
+      pushOP32(ctx, instructions, OP_put_var, JS_NewAtom(ctx, name));
     }
   }
   else
@@ -646,16 +650,16 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
     if (isTag(loc, "RemoteEnvBinding"))
     {
       int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref
-                                                                                         : OP_put_var_ref_check,
-                            refIdx);
+      pushOP16(ctx, instructions, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref
+                                                                              : OP_put_var_ref_check,
+               refIdx);
     }
     else if (isTag(loc, "EnvBinding"))
     {
       int refIdx = getFlagNumber(loc, "REFIDX");
-      currTarget = pushOP16(ctx, currTarget, thisInit ? OP_put_loc_check_init : safe ? OP_put_loc
-                                                                                     : OP_put_loc_check,
-                            refIdx);
+      pushOP16(ctx, instructions, thisInit ? OP_put_loc_check_init : safe ? OP_put_loc
+                                                                          : OP_put_loc_check,
+               refIdx);
     }
     else
     {
@@ -663,18 +667,15 @@ BCLList *storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, BCLList *curr
       exit(1);
     }
   }
-
-  return currTarget;
+  return;
 }
 
 // Gemini 2.5 pro, got it right, maybe...
-BCLList *keepNDropM(JSContext *ctx, BCLList *currTarget, int N, int M)
+void keepNDropM(JSContext *ctx, vector<BCInstruction> &instructions, int N, int M)
 {
   // If M is zero or negative, no elements need to be dropped.
   if (M <= 0)
-  {
-    return currTarget;
-  }
+    return;
 
   // If N is negative, it's an invalid input. Do nothing.
   if (N < 0)
@@ -685,8 +686,8 @@ BCLList *keepNDropM(JSContext *ctx, BCLList *currTarget, int N, int M)
 
   if (N == 2 && M == 1)
   {
-    currTarget = pushOP(ctx, currTarget, OP_nip1);
-    return currTarget;
+    pushOP(ctx, instructions, OP_nip1);
+    return;
   }
   fprintf(stderr, "TODO: keepMDropN, handle general case, validate code!!");
   exit(1);
@@ -742,31 +743,29 @@ BCLList *keepNDropM(JSContext *ctx, BCLList *currTarget, int N, int M)
   //   }
   // }
 
-  return currTarget;
+  return;
 }
 
-// ============== Misc ============== //
-
-BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
+void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval)
 {
   if (isTag(rval, "JSForInStart"))
   {
     // Push obj onto the stack
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    lowerToStack(ctx, instructions, rval->args[0]);
 
     // obj -> enum_obj
-    return pushOP(ctx, currTarget, OP_for_in_start);
+    return pushOP(ctx, instructions, OP_for_in_start);
   }
   else if (isTag(rval, "JSToObject"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    return pushOP(ctx, currTarget, OP_to_object);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    return pushOP(ctx, instructions, OP_to_object);
   }
-  else if (isTag(rval, "String"))
+  if (isTag(rval, "String"))
   {
     char *data = getFlagString(rval, "IridiumPrimitive");
     JSAtom strAtom = JS_NewAtom(ctx, data);
-    return pushOP32(ctx, currTarget, OP_push_atom_value, strAtom);
+    return pushOP32(ctx, instructions, OP_push_atom_value, strAtom);
   }
   else if (isTag(rval, "RegExp"))
   {
@@ -776,7 +775,7 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     JSValue expValue = JS_NewAtomString(ctx, exp);
     JSValue flagsValue = JS_NewAtomString(ctx, flags);
 
-    currTarget = pushOPConst(ctx, currTarget, OP_push_const, expValue);
+    pushOPConst(ctx, instructions, OP_push_const, expValue);
 
     // Compile regexp
     if (!ctx->compile_regexp)
@@ -785,36 +784,36 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       exit(1);
     }
     JSValue compiledRegexp = ctx->compile_regexp(ctx, expValue, flagsValue);
-    currTarget = pushOPConst(ctx, currTarget, OP_push_const, compiledRegexp);
-    return pushOP(ctx, currTarget, OP_regexp);
+    pushOPConst(ctx, instructions, OP_push_const, compiledRegexp);
+    return pushOP(ctx, instructions, OP_regexp);
   }
   else if (isTag(rval, "JSTemplate"))
   {
-    currTarget = pushOP(ctx, currTarget, OP_push_empty_string);
+    pushOP(ctx, instructions, OP_push_empty_string);
     JSAtom fieldAtom = JS_NewAtom(ctx, "concat");
-    currTarget = pushOP32(ctx, currTarget, OP_get_field2, fieldAtom);
+    pushOP32(ctx, instructions, OP_get_field2, fieldAtom);
 
     for (int i = 0; i < rval->numArgs; i++)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
+      lowerToStack(ctx, instructions, rval->args[i]);
     }
 
-    return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs);
+    return pushOP16(ctx, instructions, OP_call_method, rval->numArgs);
   }
   else if (isTag(rval, "Number"))
   {
-    double data = getFlagDouble(rval, "IridiumPrimitive");
+    int data = getFlagDouble(rval, "IridiumPrimitive");
     JSValue jsvalue = JS_NewNumber(ctx, data);
-    return pushOPConst(ctx, currTarget, OP_push_const, jsvalue);
+    return pushOPConst(ctx, instructions, OP_push_const, jsvalue);
   }
   else if (isTag(rval, "JSNUBD"))
   {
-    return pushOPConst(ctx, currTarget, OP_push_const, JS_UNINITIALIZED);
+    return pushOPConst(ctx, instructions, OP_push_const, JS_UNINITIALIZED);
   }
   else if (isTag(rval, "RemoteEnvBinding"))
   {
     int refIDX = getFlagNumber(rval, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_get_var_ref_check, refIDX);
+    return pushOP16(ctx, instructions, OP_get_var_ref_check, refIDX);
   }
   else if (isTag(rval, "EnvBinding"))
   {
@@ -824,28 +823,28 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       int argIdx = getFlagNumber(rval, "REFIDX");
       // int argIdx = parse_arg_index(getFlagString(rval->args[0], "IridiumPrimitive"));
       assert(argIdx > -1);
-      return pushOP16(ctx, currTarget, OP_get_arg, argIdx);
+      return pushOP16(ctx, instructions, OP_get_arg, argIdx);
     }
     else if (hasFlag(rval, "JSRESTARG"))
     {
       int argIdx = getFlagNumber(rval, "REFIDX");
       // int argIdx = parse_arg_index(getFlagString(rval->args[0], "IridiumPrimitive"));
       assert(argIdx > -1);
-      return pushOP16(ctx, currTarget, OP_rest, argIdx);
+      pushOP16(ctx, instructions, OP_rest, argIdx);
     }
     else
     {
       int refIDX = getFlagNumber(rval, "REFIDX");
-      return pushOP16(ctx, currTarget, OP_get_loc_check, refIDX);
+      return pushOP16(ctx, instructions, OP_get_loc_check, refIDX);
     }
   }
   else if (isTag(rval, "GlobalBinding"))
   {
     char *lookupVal = getFlagString(rval, "NAME");
     if (strcmp(lookupVal, "undefined") == 0)
-      return pushOP(ctx, currTarget, OP_undefined);
+      return pushOP(ctx, instructions, OP_undefined);
     else
-      return pushOP32(ctx, currTarget, OP_get_var, JS_NewAtom(ctx, lookupVal));
+      return pushOP32(ctx, instructions, OP_get_var, JS_NewAtom(ctx, lookupVal));
   }
   else if (isTag(rval, "CallSite"))
   {
@@ -855,8 +854,8 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     if (hasFlag(rval, "ConstructorCall"))
     {
       assert(rval->numArgs >= 1);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-      currTarget = pushOP(ctx, currTarget, OP_dup);
+      lowerToStack(ctx, instructions, rval->args[0]);
+      pushOP(ctx, instructions, OP_dup);
       i = 1;
     }
 
@@ -864,58 +863,58 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     if (hasFlag(rval, "PrivateCall"))
     {
       assert(rval->numArgs >= 2);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = pushOP(ctx, currTarget, OP_check_brand); // Ensure the function's home object's brand matches the brand of the current instance.
+      lowerToStack(ctx, instructions, rval->args[0]);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      pushOP(ctx, instructions, OP_check_brand); // Ensure the function's home object's brand matches the brand of the current instance.
       i = 2;
     }
 
     // Lower Arguments
     for (; i < rval->numArgs; i++)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
+      lowerToStack(ctx, instructions, rval->args[i]);
     }
 
     // Emit Call
     if (hasFlag(rval, "Super"))
     {
-      return pushOP16(ctx, currTarget, OP_call_constructor, rval->numArgs - 2);
+      return pushOP16(ctx, instructions, OP_call_constructor, rval->numArgs - 2);
     }
     else if (hasFlag(rval, "ConstructorCall"))
     {
-      return pushOP16(ctx, currTarget, OP_call_constructor, rval->numArgs - 1);
+      return pushOP16(ctx, instructions, OP_call_constructor, rval->numArgs - 1);
     }
     else if (hasFlag(rval, "CCall"))
     {
-      return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs - 2);
+      return pushOP16(ctx, instructions, OP_call_method, rval->numArgs - 2);
     }
     else if (hasFlag(rval, "PrivateCall"))
     {
-      return pushOP16(ctx, currTarget, OP_call_method, rval->numArgs - 2);
+      return pushOP16(ctx, instructions, OP_call_method, rval->numArgs - 2);
     }
     else
     {
-      return pushOP16(ctx, currTarget, OP_call, rval->numArgs - 1);
+      return pushOP16(ctx, instructions, OP_call, rval->numArgs - 1);
     }
   }
   else if (isTag(rval, "EnvRead"))
   {
-    return lowerToStack(ctx, currTarget, rval->args[0]);
+    return lowerToStack(ctx, instructions, rval->args[0]);
   }
   else if (isTag(rval, "EnvWrite"))
   {
-    return handleEnvWrite(ctx, currTarget, rval, true);
+    return handleEnvWrite(ctx, instructions, rval, true);
   }
   else if (isTag(rval, "Boolean"))
   {
     bool res = getFlagBoolean(rval, "IridiumPrimitive");
     if (res)
     {
-      return pushOP(ctx, currTarget, OP_push_true);
+      return pushOP(ctx, instructions, OP_push_true);
     }
     else
     {
-      return pushOP(ctx, currTarget, OP_push_false);
+      return pushOP(ctx, instructions, OP_push_false);
     }
   }
   else if (isTag(rval, "Unop"))
@@ -923,28 +922,28 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     char *op = getFlagString(rval->args[0], "IridiumPrimitive");
     if (strcmp(op, "!") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      return pushOP(ctx, currTarget, OP_lnot);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      return pushOP(ctx, instructions, OP_lnot);
     }
     else if (strcmp(op, "-") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      return pushOP(ctx, currTarget, OP_neg);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      return pushOP(ctx, instructions, OP_neg);
     }
     else if (strcmp(op, "+") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      return pushOP(ctx, currTarget, OP_plus);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      return pushOP(ctx, instructions, OP_plus);
     }
     else if (strcmp(op, "~") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      return pushOP(ctx, currTarget, OP_not);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      return pushOP(ctx, instructions, OP_not);
     }
     else if (strcmp(op, "typeof") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      return pushOP(ctx, currTarget, OP_typeof);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      return pushOP(ctx, instructions, OP_typeof);
     }
     else if (strcmp(op, "delete") == 0)
     {
@@ -954,16 +953,16 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       {
         IridiumSEXP *receiver = valToDelete->args[0];
         IridiumSEXP *field = valToDelete->args[1];
-        currTarget = lowerToStack(ctx, currTarget, receiver);
-        currTarget = lowerToStack(ctx, currTarget, field);
-        return pushOP(ctx, currTarget, OP_delete);
+        lowerToStack(ctx, instructions, receiver);
+        lowerToStack(ctx, instructions, field);
+        return pushOP(ctx, instructions, OP_delete);
       }
       else if (hasFlag(valToDelete, "UNOP_DEL_VAR"))
       {
         IridiumSEXP *var = valToDelete->args[0];
         assert(isTag(var, "String"));
         JSAtom varAtom = JS_NewAtom(ctx, getFlagString(var, "IridiumPrimitive"));
-        return pushOP32(ctx, currTarget, OP_delete_var, varAtom);
+        return pushOP32(ctx, instructions, OP_delete_var, varAtom);
       }
       else
       {
@@ -982,141 +981,141 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     char *op = getFlagString(rval->args[0], "IridiumPrimitive");
     if (strcmp(op, "+") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_add);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_add);
     }
     else if (strcmp(op, "-") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_sub);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_sub);
     }
     else if (strcmp(op, "/") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_div);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_div);
     }
     else if (strcmp(op, "%") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_mod);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_mod);
     }
     else if (strcmp(op, "*") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_mul);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_mul);
     }
     else if (strcmp(op, "**") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_pow);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_pow);
     }
     else if (strcmp(op, "&") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_and);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_and);
     }
     else if (strcmp(op, "|") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_or);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_or);
     }
     else if (strcmp(op, ">>") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_sar);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_sar);
     }
     else if (strcmp(op, ">>>") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_shr);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_shr);
     }
     else if (strcmp(op, "<<") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_shl);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_shl);
     }
     else if (strcmp(op, "^") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_xor);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_xor);
     }
     else if (strcmp(op, "==") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_eq);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_eq);
     }
     else if (strcmp(op, "===") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_strict_eq);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_strict_eq);
     }
     else if (strcmp(op, "!=") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_neq);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_neq);
     }
     else if (strcmp(op, "!==") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_strict_neq);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_strict_neq);
     }
     else if (strcmp(op, "pin") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_private_in);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_private_in);
     }
     else if (strcmp(op, "in") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_in);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_in);
     }
     else if (strcmp(op, "instanceof") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_instanceof);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_instanceof);
     }
     else if (strcmp(op, ">") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_gt);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_gt);
     }
     else if (strcmp(op, "<") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_lt);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_lt);
     }
     else if (strcmp(op, ">=") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_gte);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_gte);
     }
     else if (strcmp(op, "<=") == 0)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-      currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-      return pushOP(ctx, currTarget, OP_lte);
+      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[2]);
+      return pushOP(ctx, instructions, OP_lte);
     }
     else
     {
@@ -1127,51 +1126,81 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   else if (isTag(rval, "FieldRead"))
   {
     IridiumSEXP *receiver = rval->args[0];
-    currTarget = lowerToStack(ctx, currTarget, receiver);
+    lowerToStack(ctx, instructions, receiver);
     IridiumSEXP *field = rval->args[1];
     ensureTag(field, "String");
     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    return pushOP32(ctx, currTarget, OP_get_field, fieldAtom);
+    return pushOP32(ctx, instructions, OP_get_field, fieldAtom);
   }
   else if (isTag(rval, "JSComputedFieldRead"))
   {
     IridiumSEXP *receiver = rval->args[0];
-    currTarget = lowerToStack(ctx, currTarget, receiver);
+    lowerToStack(ctx, instructions, receiver);
     IridiumSEXP *field = rval->args[1];
-    currTarget = lowerToStack(ctx, currTarget, field);
-    return pushOP(ctx, currTarget, OP_get_array_el);
+    lowerToStack(ctx, instructions, field);
+    return pushOP(ctx, instructions, OP_get_array_el);
   }
   else if (isTag(rval, "JSObjectProp"))
   {
     IridiumSEXP *val = rval->args[1];
-    currTarget = lowerToStack(ctx, currTarget, val);
+    lowerToStack(ctx, instructions, val);
 
     IridiumSEXP *field = rval->args[0];
     ensureTag(field, "String");
     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    return pushOP32(ctx, currTarget, OP_define_field, fieldAtom);
+    return pushOP32(ctx, instructions, OP_define_field, fieldAtom);
   }
   else if (isTag(rval, "JSComputedObjectProp"))
   {
     IridiumSEXP *field = rval->args[0];
-    currTarget = lowerToStack(ctx, currTarget, field);
+    lowerToStack(ctx, instructions, field);
 
     IridiumSEXP *val = rval->args[1];
-    currTarget = lowerToStack(ctx, currTarget, val);
+    lowerToStack(ctx, instructions, val);
 
-    currTarget = pushOP(ctx, currTarget, OP_define_array_el);
-    return pushOP(ctx, currTarget, OP_drop);
+    pushOP(ctx, instructions, OP_define_array_el);
+    return pushOP(ctx, instructions, OP_drop);
   }
+
+  // else if (isTag(rval, "JSObjectMethod"))
+  // {
+  //   IridiumSEXP *val = rval->args[1];
+  //   lowerToStack(ctx, instructions, val);
+
+  //   IridiumSEXP *field = rval->args[0];
+  //   ensureTag(field, "String");
+  //   JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+  //   pushOP32(ctx, instructions, OP_define_method, fieldAtom);
+  //   uint8_t op_flag;
+  //   if (hasFlag(rval, "METHOD"))
+  //   {
+  //     op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
+  //   }
+  //   else if (hasFlag(rval, "GET"))
+  //   {
+  //     op_flag = OP_DEFINE_METHOD_GETTER | OP_DEFINE_METHOD_ENUMERABLE;
+  //   }
+  //   else if (hasFlag(rval, "SET"))
+  //   {
+  //     op_flag = OP_DEFINE_METHOD_SETTER | OP_DEFINE_METHOD_ENUMERABLE;
+  //   }
+  //   else
+  //   {
+  //     fprintf(stderr, "TODO: JSObjectMethod invalid flag\n");
+  //     exit(1);
+  //   }
+  //   return push8(ctx, instructions, op_flag);
+  // }
 
   else if (isTag(rval, "JSObject"))
   {
-    return pushOP(ctx, currTarget, OP_object);
+    pushOP(ctx, instructions, OP_object);
     // for (int i = 0; i < rval->numArgs; i++)
     // {
     //   IridiumSEXP *ele = rval->args[i];
     //   if (isTag(ele, "JSObjectProp") || isTag(ele, "JSComputedObjectProp") || isTag(ele, "JSObjectMethod"))
     //   {
-    //     currTarget = lowerToStack(ctx, currTarget, ele);
+    //     lowerToStack(ctx, instructions, ele);
     //   }
     //   else
     //   {
@@ -1183,9 +1212,9 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
   else if (isTag(rval, "PoolBinding"))
   {
     uint32_t poolOffset = getFlagNumber(rval, "REFIDX");
-    currTarget = pushOP32(ctx, currTarget, OP_fclosure, poolOffset);
-    currTarget->lambdaPoolReference = true;
-    return currTarget;
+    pushOP32(ctx, instructions, OP_fclosure, poolOffset);
+    instructions.back().lambdaPoolReference = true;
+    return;
   }
   else if (isTag(rval, "JSClass"))
   {
@@ -1193,25 +1222,25 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
     ensureTag(className, "String");
     JSAtom classNameAtom = JS_NewAtom(ctx, getFlagString(className, "IridiumPrimitive"));
 
-    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
+    lowerToStack(ctx, instructions, rval->args[1]);
 
     // Instead of creating a closure, we push the constructor bytecode directly onto the stack
     {
       IridiumSEXP *constructorClosure = rval->args[2];
       uint32_t poolOffset = getFlagNumber(constructorClosure, "REFIDX");
-      currTarget = pushOP32(ctx, currTarget, OP_push_const, poolOffset);
-      currTarget->lambdaPoolReference = true;
+      pushOP32(ctx, instructions, OP_push_const, poolOffset);
+      instructions.back().lambdaPoolReference = true;
     }
 
     uint8_t flags = hasFlag(rval, "Derived") ? 1 : 0;
-    currTarget = pushOP32Flags(ctx, currTarget, OP_define_class, classNameAtom, flags);
+    pushOP32Flags(ctx, instructions, OP_define_class, classNameAtom, flags);
     // Class Flags, the bytecode itself is 5 + 1 bytes (1 byte OPcode + 4 byte name + 1 byte flags)
 
     // Set home object for classPropInitClosure
     IridiumSEXP *classPropInitClos = rval->args[3];
-    currTarget = lowerToStack(ctx, currTarget, classPropInitClos);
-    currTarget = pushOP(ctx, currTarget, OP_set_home_object);
-    currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drops the closure, not the prototype: set does not pop
+    lowerToStack(ctx, instructions, classPropInitClos);
+    pushOP(ctx, instructions, OP_set_home_object);
+    pushOP(ctx, instructions, OP_drop); // <- Drops the closure, not the prototype: set does not pop
 
     // Define methods on the prototype
     IridiumSEXP *methodList = rval->args[4];
@@ -1245,44 +1274,44 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       if (isTag(methodName, "String"))
       {
         // Lower the method on the stack
-        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        lowerToStack(ctx, instructions, methodLambda);
 
         // Get the method name atom
         ensureTag(methodName, "String");
         JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
 
         // Define method on the prototype
-        currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
+        pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
       }
       else if (isTag(methodName, "EnvRead"))
       {
         // Lower the computed name of the function on stack
-        currTarget = lowerToStack(ctx, currTarget, methodName);
+        lowerToStack(ctx, instructions, methodName);
 
         // Lower the closure on the stack
-        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        lowerToStack(ctx, instructions, methodLambda);
 
         // Define method on the prototype
-        currTarget = pushOPFlags(ctx, currTarget, OP_define_method_computed, op_flag);
+        pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
       }
       else if (isTag(methodName, "Private"))
       {
         // Get the lambda on the stack
-        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        lowerToStack(ctx, instructions, methodLambda);
 
         // Set name
         JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-        currTarget = pushOP32(ctx, currTarget, OP_set_name, privateMethodNameAtom);
+        pushOP32(ctx, instructions, OP_set_name, privateMethodNameAtom);
 
         // Set home to be the prototype
-        currTarget = pushOP(ctx, currTarget, OP_set_home_object); // sets the home to the prototype
+        pushOP(ctx, instructions, OP_set_home_object); // sets the home to the prototype
 
-        currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drop the closure from stack
+        pushOP(ctx, instructions, OP_drop); // <- Drop the closure from stack
       }
     }
 
     // Define methods on the constructor
-    currTarget = pushOP(ctx, currTarget, OP_swap); // ctr proto -> proto ctr
+    pushOP(ctx, instructions, OP_swap); // ctr proto -> proto ctr
     IridiumSEXP *staticMethodList = rval->args[5];
     for (int i = 0; i < staticMethodList->numArgs; ++i)
     {
@@ -1314,110 +1343,110 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       if (isTag(methodName, "String"))
       {
         // Lower the method on the stack
-        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        lowerToStack(ctx, instructions, methodLambda);
 
         // Get the method name atom
         ensureTag(methodName, "String");
         JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
 
         // Define method on the prototype
-        currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
+        pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
       }
       else if (isTag(methodName, "EnvRead"))
       {
         // Lower the computed name of the function on stack
-        currTarget = lowerToStack(ctx, currTarget, methodName);
+        lowerToStack(ctx, instructions, methodName);
 
         // Lower the closure on the stack
-        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        lowerToStack(ctx, instructions, methodLambda);
 
         // Define method on the prototype
-        currTarget = pushOPFlags(ctx, currTarget, OP_define_method_computed, op_flag);
+        pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
       }
       else if (isTag(methodName, "Private"))
       {
         // Get the lambda on the stack
-        currTarget = lowerToStack(ctx, currTarget, methodLambda);
+        lowerToStack(ctx, instructions, methodLambda);
 
         // Set name
         JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-        currTarget = pushOP32(ctx, currTarget, OP_set_name, privateMethodNameAtom);
+        pushOP32(ctx, instructions, OP_set_name, privateMethodNameAtom);
 
         // Set home to be the prototype
-        currTarget = pushOP(ctx, currTarget, OP_set_home_object); // sets the home to the prototype
+        pushOP(ctx, instructions, OP_set_home_object); // sets the home to the prototype
 
-        currTarget = pushOP(ctx, currTarget, OP_drop); // <- Drop the closure from stack
+        pushOP(ctx, instructions, OP_drop); // <- Drop the closure from stack
       }
     }
-    currTarget = pushOP(ctx, currTarget, OP_swap); // proto ctr -> ctr proto
+    pushOP(ctx, instructions, OP_swap); // proto ctr -> ctr proto
 
     // BrandPrototype
     if (hasFlag(rval, "BrandPrototype"))
     {
-      currTarget = pushOP(ctx, currTarget, OP_dup);
-      currTarget = pushOP(ctx, currTarget, OP_null);
-      currTarget = pushOP(ctx, currTarget, OP_swap);
-      currTarget = pushOP(ctx, currTarget, OP_add_brand);
+      pushOP(ctx, instructions, OP_dup);
+      pushOP(ctx, instructions, OP_null);
+      pushOP(ctx, instructions, OP_swap);
+      pushOP(ctx, instructions, OP_add_brand);
     }
 
-    currTarget = pushOP(ctx, currTarget, OP_drop);
+    pushOP(ctx, instructions, OP_drop);
 
     // BrandPrototype
     if (hasFlag(rval, "BrandConstructor"))
     {
-      currTarget = pushOP(ctx, currTarget, OP_dup);
-      currTarget = pushOP(ctx, currTarget, OP_dup);
-      currTarget = pushOP(ctx, currTarget, OP_add_brand);
+      pushOP(ctx, instructions, OP_dup);
+      pushOP(ctx, instructions, OP_dup);
+      pushOP(ctx, instructions, OP_add_brand);
     }
 
     // Static Prop Init
     IridiumSEXP *staticPropInitClosure = rval->args[6];
-    currTarget = pushOP(ctx, currTarget, OP_dup);
-    currTarget = lowerToStack(ctx, currTarget, staticPropInitClosure);
-    currTarget = pushOP(ctx, currTarget, OP_set_home_object);
-    currTarget = pushOP16(ctx, currTarget, OP_call_method, 0);
-    currTarget = pushOP(ctx, currTarget, OP_drop);
+    pushOP(ctx, instructions, OP_dup);
+    lowerToStack(ctx, instructions, staticPropInitClosure);
+    pushOP(ctx, instructions, OP_set_home_object);
+    pushOP16(ctx, instructions, OP_call_method, 0);
+    pushOP(ctx, instructions, OP_drop);
 
-    return currTarget;
+    return;
   }
   else if (isTag(rval, "JSArray"))
   {
     for (int i = 0; i < rval->numArgs; i++)
     {
-      currTarget = lowerToStack(ctx, currTarget, rval->args[i]);
+      lowerToStack(ctx, instructions, rval->args[i]);
     }
-    return pushOP16(ctx, currTarget, OP_array_from, rval->numArgs);
+    return pushOP16(ctx, instructions, OP_array_from, rval->numArgs);
   }
   else if (isTag(rval, "Private"))
   {
     char *data = getFlagString(rval, "IridiumPrimitive");
     JSAtom strAtom = JS_NewAtom(ctx, data);
-    return pushOP32(ctx, currTarget, OP_private_symbol, strAtom);
+    return pushOP32(ctx, instructions, OP_private_symbol, strAtom);
   }
   else if (isTag(rval, "JSPrivateFieldRead"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-    return pushOP(ctx, currTarget, OP_get_private_field);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    lowerToStack(ctx, instructions, rval->args[1]);
+    return pushOP(ctx, instructions, OP_get_private_field);
   }
   else if (isTag(rval, "JSSuperFieldRead"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-    return pushOP(ctx, currTarget, OP_get_super_value);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    lowerToStack(ctx, instructions, rval->args[1]);
+    lowerToStack(ctx, instructions, rval->args[2]);
+    return pushOP(ctx, instructions, OP_get_super_value);
   }
   else if (isTag(rval, "JSSuperFieldWrite"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[2]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[3]);
-    return pushOP(ctx, currTarget, OP_put_super_value);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    lowerToStack(ctx, instructions, rval->args[1]);
+    lowerToStack(ctx, instructions, rval->args[2]);
+    lowerToStack(ctx, instructions, rval->args[3]);
+    return pushOP(ctx, instructions, OP_put_super_value);
   }
   else if (isTag(rval, "Null"))
   {
-    return pushOP(ctx, currTarget, OP_null);
+    return pushOP(ctx, instructions, OP_null);
   }
   else if (isTag(rval, "BitInt"))
   {
@@ -1450,106 +1479,109 @@ BCLList *lowerToStack(JSContext *ctx, BCLList *currTarget, IridiumSEXP *rval)
       val = JS_ThrowOutOfMemory(ctx);
     }
     val = JS_CompactBigInt(ctx, r);
-    return pushOPConst(ctx, currTarget, OP_push_const, val);
+    return pushOPConst(ctx, instructions, OP_push_const, val);
   }
+  // else if (isTag(rval, "Yield"))
+  // {
+  //   lowerToStack(ctx, instructions, rval->args[0]);
+  //   return pushOP(ctx, instructions, OP_yield);
+  // }
   else if (isTag(rval, "Await"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    return pushOP(ctx, currTarget, OP_await);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    return pushOP(ctx, instructions, OP_await);
   }
   else if (isTag(rval, "Nope"))
   {
-    return currTarget;
+    return;
   }
   else if (isTag(rval, "FieldWrite"))
   {
     // Receiver
     IridiumSEXP *receiver = rval->args[0];
-    currTarget = lowerToStack(ctx, currTarget, receiver);
+    lowerToStack(ctx, instructions, receiver);
 
     // Rval
     IridiumSEXP *valToPush = rval->args[2];
-    currTarget = lowerToStack(ctx, currTarget, valToPush);
-    currTarget = pushOP(ctx, currTarget, OP_dup);
-    currTarget = pushOP(ctx, currTarget, OP_rot3r);
+    lowerToStack(ctx, instructions, valToPush);
+    pushOP(ctx, instructions, OP_dup);
+    pushOP(ctx, instructions, OP_rot3r);
 
     // Field
     IridiumSEXP *field = rval->args[1];
     ensureTag(field, "String");
     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    currTarget = pushOP32(ctx, currTarget, OP_put_field, fieldAtom);
-
-    return currTarget;
+    pushOP32(ctx, instructions, OP_put_field, fieldAtom);
   }
   else if (isTag(rval, "JSComputedFieldWrite"))
   {
     // Receiver
     IridiumSEXP *receiver = rval->args[0];
-    currTarget = lowerToStack(ctx, currTarget, receiver);
+    lowerToStack(ctx, instructions, receiver);
 
     // Field
     IridiumSEXP *field = rval->args[1];
-    currTarget = lowerToStack(ctx, currTarget, field);
-    currTarget = pushOP(ctx, currTarget, OP_to_propkey);
+    lowerToStack(ctx, instructions, field);
+    pushOP(ctx, instructions, OP_to_propkey);
 
     // Rval
     IridiumSEXP *assnVal = rval->args[2];
-    currTarget = lowerToStack(ctx, currTarget, assnVal);
+    lowerToStack(ctx, instructions, assnVal);
 
     // Receiver Field Rval -> Rval Receiver Field Rval
-    currTarget = pushOP(ctx, currTarget, OP_insert3);
+    pushOP(ctx, instructions, OP_insert3);
 
-    currTarget = pushOP(ctx, currTarget, OP_put_array_el); // Receiver Field Rval
+    pushOP(ctx, instructions, OP_put_array_el); // Receiver Field Rval
   }
   else if (isTag(rval, "JSADDBRAND"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, rval->args[1]);
-    return pushOP(ctx, currTarget, OP_add_brand);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    lowerToStack(ctx, instructions, rval->args[1]);
+    return pushOP(ctx, instructions, OP_add_brand);
   }
   else if (isTag(rval, "JSCheckConstructor"))
   {
-    return pushOP(ctx, currTarget, OP_check_ctor);
+    return pushOP(ctx, instructions, OP_check_ctor);
   }
   else if (isTag(rval, "StackPop"))
   {
-    return currTarget;
+    return;
   }
   else if (isTag(rval, "JSForInNext"))
   {
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
-    currTarget = pushOP(ctx, currTarget, OP_for_in_next);
+    lowerToStack(ctx, instructions, rval->args[0]);
+    pushOP(ctx, instructions, OP_for_in_next);
 
-    currTarget = keepNDropM(ctx, currTarget, 2, 1);
+    keepNDropM(ctx, instructions, 2, 1);
 
-    return currTarget;
+    return;
   }
   else if (isTag(rval, "JSForOfStart"))
   {
     // Push obj onto the stack
-    currTarget = lowerToStack(ctx, currTarget, rval->args[0]);
+    lowerToStack(ctx, instructions, rval->args[0]);
 
     // obj -> enum_obj iterator_method catch_offset
-    return pushOP(ctx, currTarget, OP_for_of_start);
+    return pushOP(ctx, instructions, OP_for_of_start);
   }
   else if (isTag(rval, "JSForOfNext"))
   {
     // [it, meth, off] -> [it, meth, off, result, done]
-    return pushOP16(ctx, currTarget, OP_for_of_next, 0);
+    return pushOP16(ctx, instructions, OP_for_of_next, 0);
   }
   else if (isTag(rval, "JSForOfIteratorClose"))
   {
-    return pushOP(ctx, currTarget, OP_iterator_close);
+    return pushOP(ctx, instructions, OP_iterator_close);
   }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
     exit(1);
   }
-  return currTarget;
+  return;
 }
 
-BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt, bool saveResToStack)
+void handleEnvWrite(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *currStmt, bool saveResToStack)
 {
   bool safe = getFlagBoolean(currStmt, "SAFE");
   bool thisInit = getFlagBoolean(currStmt, "THISINIT");
@@ -1559,32 +1591,150 @@ BCLList *handleEnvWrite(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currSt
   IridiumSEXP *rval = currStmt->args[1];
 
   // Store something on the stack
-  currTarget = lowerToStack(ctx, currTarget, rval);
+  lowerToStack(ctx, instructions, rval);
   // Store that something where its required
-  return storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, saveResToStack);
+  return storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, saveResToStack);
 }
 
-BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStmt)
+void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *currStmt)
 {
+  // printf("stmt_type=%s\n",currStmt->tag);
   if (isTag(currStmt, "EnvWrite"))
   {
-    currTarget = handleEnvWrite(ctx, currTarget, currStmt, false);
+    handleEnvWrite(ctx, instructions, currStmt, false);
   }
   else if (isTag(currStmt, "FieldWrite") || isTag(currStmt, "JSComputedFieldWrite")) // Make fast cases for these too...
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt);
-    return pushOP(ctx, currTarget, OP_drop);
+    lowerToStack(ctx, instructions, currStmt);
+    return pushOP(ctx, instructions, OP_drop);
   }
+  // else if (isTag(currStmt, "JSForInNext"))
+  // {
+  //   lowerToStack(ctx, instructions, currStmt->args[0]);
+  //   pushOP(ctx, instructions, OP_for_in_next);
+
+  //   IridiumSEXP *doneTarget = currStmt->args[1];
+  //   assert(isTag(doneTarget, "EnvBinding"));
+  //   int doneTargetIDX = getFlagNumber(doneTarget, "REFIDX");
+
+  //   IridiumSEXP *nextValTarget = currStmt->args[2];
+  //   assert(isTag(nextValTarget, "EnvBinding"));
+  //   int nextValTargetIDX = getFlagNumber(nextValTarget, "REFIDX");
+
+  //   pushOP16(ctx, instructions, OP_put_loc, doneTargetIDX);    // top of the stack contains <loop-done>
+  //   pushOP16(ctx, instructions, OP_put_loc, nextValTargetIDX); // top - 1 of the stack contains <loop-next>
+  //   return pushOP(ctx, instructions, OP_drop);                 // drop enum_obj
+  // }
+  // else if (isTag(currStmt, "JSForOfStart"))
+  // {
+  //   // Push obj onto the stack
+  //   lowerToStack(ctx, instructions, currStmt->args[0]);
+
+  //   // obj -> enum_obj iterator_method catch_offset
+  //   return pushOP(ctx, instructions, OP_for_of_start);
+
+  //   // pushOP(ctx, instructions, OP_swap);
+
+  //   // IridiumSEXP *methodStackLocation = currStmt->args[1];
+  //   // int methodStackLocationIDX = getFlagNumber(methodStackLocation, "REFIDX");
+  //   // if (isTag(methodStackLocation, "EnvBinding")) {
+  //   //   pushOP16(ctx, instructions, OP_put_loc_check, methodStackLocationIDX);
+  //   // } else if (isTag(methodStackLocation, "RemoteEnvBinding")) {
+  //   //   pushOP16(ctx, instructions, OP_put_var_ref_check, methodStackLocationIDX);
+  //   // } else {
+  //   //   fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+  //   // }
+
+  //   // pushOP(ctx, instructions, OP_swap);
+
+  //   // IridiumSEXP *methodItLocation = currStmt->args[2];
+  //   // int methodItLocationIDX = getFlagNumber(methodItLocation, "REFIDX");
+  //   // if (isTag(methodItLocation, "EnvBinding")) {
+  //   //   pushOP16(ctx, instructions, OP_put_loc_check, methodItLocationIDX);
+  //   // } else if (isTag(methodItLocation, "RemoteEnvBinding")) {
+  //   //   pushOP16(ctx, instructions, OP_put_var_ref_check, methodItLocationIDX);
+  //   // } else {
+  //   //   fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+  //   // }
+  // }
+  // else if (isTag(currStmt, "JSForInStart"))
+  // {
+  //   // Push obj onto the stack
+  //   lowerToStack(ctx, instructions, currStmt->args[0]);
+
+  //   // obj -> enum_obj
+  //   pushOP(ctx, instructions, OP_for_in_start);
+  //   IridiumSEXP *stackLocation = currStmt->args[1];
+  //   int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+  //   if (isTag(stackLocation, "EnvBinding"))
+  //   {
+  //     pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
+  //   }
+  //   else if (isTag(stackLocation, "RemoteEnvBinding"))
+  //   {
+  //     pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
+  //   }
+  //   else
+  //   {
+  //     fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+  //   }
+  // }
+  // else if (isTag(currStmt, "JSForOfNext"))
+  // {
+  //   // [it, meth, off] -> [it, meth, off, result, done]
+  //   pushOP16(ctx, instructions, OP_for_of_next, 0);
+
+  //   // Store <for-of-loop-done> = done
+  //   // Store <for-of-loop-next> = result
+  //   assert(currStmt->numArgs == 2);
+  //   for (int i = 0; i < currStmt->numArgs; i++)
+  //   {
+  //     IridiumSEXP *stackLocation = currStmt->args[i];
+  //     int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+  //     if (isTag(stackLocation, "EnvBinding"))
+  //     {
+  //       pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
+  //     }
+  //     else if (isTag(stackLocation, "RemoteEnvBinding"))
+  //     {
+  //       pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
+  //     }
+  //     else
+  //     {
+  //       fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+  //     }
+  //   }
+  // }
+  // else if (isTag(currStmt, "JSADDBRAND"))
+  // {
+  //   lowerToStack(ctx, instructions, currStmt->args[0]);
+  //   lowerToStack(ctx, instructions, currStmt->args[1]);
+  //   return pushOP(ctx, instructions, OP_add_brand);
+  // }
+  // else if (isTag(currStmt, "JSComputedFieldWrite"))
+  // {
+  //   IridiumSEXP *receiver = currStmt->args[0];
+  //   lowerToStack(ctx, instructions, receiver);
+
+  //   IridiumSEXP *field = currStmt->args[1];
+  //   lowerToStack(ctx, instructions, field);
+  //   pushOP(ctx, instructions, OP_to_propkey);
+
+  //   IridiumSEXP *assnVal = currStmt->args[2];
+  //   lowerToStack(ctx, instructions, assnVal);
+
+  //   return pushOP(ctx, instructions, OP_put_array_el); // obj prop val
+  // }
   else if (isTag(currStmt, "StackRetain"))
   {
     if (currStmt->numArgs > 0)
     {
       for (int i = 0; i < currStmt->numArgs; i++)
       {
-        currTarget = lowerToStack(ctx, currTarget, currStmt->args[i]);
+        lowerToStack(ctx, instructions, currStmt->args[i]);
       }
     }
-    return currTarget;
+    return;
   }
   else if (isTag(currStmt, "StackReject"))
   {
@@ -1592,97 +1742,112 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     {
       for (int i = 0; i < currStmt->numArgs; i++)
       {
-        currTarget = lowerToStack(ctx, currTarget, currStmt->args[i]);
+        lowerToStack(ctx, instructions, currStmt->args[i]);
       }
     }
 
     int nVal = getFlagNumber(currStmt, "NVAL");
     for (int i = 0; i < nVal; i++)
     {
-      currTarget = pushOP(ctx, currTarget, OP_drop);
+      pushOP(ctx, instructions, OP_drop);
     }
 
-    return currTarget;
+    return;
   }
   else if (isTag(currStmt, "Throw"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    return pushOP(ctx, currTarget, OP_throw);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
+    return pushOP(ctx, instructions, OP_throw);
   }
-
+  // else if (isTag(currStmt, "JSCheckConstructor"))
+  // {
+  //   return pushOP(ctx, instructions, OP_check_ctor);
+  // }
   else if (isTag(currStmt, "JSCatchContext"))
   {
     IridiumSEXP *loc = currStmt->args[0];
     ensureTag(loc, "EnvBinding");
     int refIdx = getFlagNumber(loc, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
+  // else if (isTag(currStmt, "PushForOfCatchContext"))
+  // {
+  //   return lowerToStack(ctx, instructions, currStmt->args[0]);
+  // }
   else if (isTag(currStmt, "IfJump"))
   {
     // Push check to stack
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
 
     bool isNot = hasFlag(currStmt, "NOT");
 
     // Jmp to TRUE if stack value is true
-    currTarget = pushOP32(ctx, currTarget, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
+    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
 
-    return currTarget;
+    return;
   }
   else if (isTag(currStmt, "IfElseJump"))
   {
     // Push check to stack
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
 
     // Jmp to TRUE if stack value is true
-    currTarget = pushOP32(ctx, currTarget, OP_if_true, getFlagNumber(currStmt, "TRUE"));
+    pushOP32(ctx, instructions, OP_if_true, getFlagNumber(currStmt, "TRUE"));
 
     // Jmp to FALSE if stack value is false
-    currTarget = pushOP32(ctx, currTarget, OP_goto, getFlagNumber(currStmt, "FALSE"));
+    pushOP32(ctx, instructions, OP_goto, getFlagNumber(currStmt, "FALSE"));
 
-    return currTarget;
+    return;
   }
   else if (isTag(currStmt, "JSModuleStart"))
   {
-    currTarget = pushOP(ctx, currTarget, OP_push_this);
-    currTarget = pushOP8(ctx, currTarget, OP_if_false8, 2);
-    return pushOP(ctx, currTarget, OP_return_undef);
+    pushOP(ctx, instructions, OP_push_this);
+    pushOP8(ctx, instructions, OP_if_false8, 2);
+    return pushOP(ctx, instructions, OP_return_undef);
   }
   else if (isTag(currStmt, "JSModuleEnd"))
   {
-    currTarget = pushOP(ctx, currTarget, OP_undefined);
-    return pushOP(ctx, currTarget, OP_return_async);
+    pushOP(ctx, instructions, OP_undefined);
+    return pushOP(ctx, instructions, OP_return_async);
   }
   else if (isTag(currStmt, "InvokeFinalizer"))
   {
-    return pushOP32(ctx, currTarget, OP_gosub, getFlagNumber(currStmt, "IDX"));
+    return pushOP32(ctx, instructions, OP_gosub, getFlagNumber(currStmt, "IDX"));
   }
   else if (isTag(currStmt, "Goto"))
   {
-    return pushOP32(ctx, currTarget, OP_goto, getFlagNumber(currStmt, "IDX"));
+    return pushOP32(ctx, instructions, OP_goto, getFlagNumber(currStmt, "IDX"));
   }
   else if (isTag(currStmt, "PushCatchContext"))
   {
-    return pushOP32(ctx, currTarget, OP_catch, getFlagNumber(currStmt, "IDX"));
+    return pushOP32(ctx, instructions, OP_catch, getFlagNumber(currStmt, "IDX"));
   }
   else if (isTag(currStmt, "PopCatchContext"))
   {
-    return pushOP(ctx, currTarget, OP_drop);
+    return pushOP(ctx, instructions, OP_drop);
   }
   else if (isTag(currStmt, "Return"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    return pushOP(ctx, currTarget, OP_return);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
+    return pushOP(ctx, instructions, OP_return);
   }
   else if (isTag(currStmt, "ReturnAsync"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    return pushOP(ctx, currTarget, OP_return_async);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
+    return pushOP(ctx, instructions, OP_return_async);
   }
   else if (isTag(currStmt, "NOP"))
   {
-    return currTarget;
+    return;
   }
+  // else if (isTag(currStmt, "JSTHISINIT"))
+  // {
+  //   pushOP(ctx, instructions, OP_push_this);
+  //   IridiumSEXP *thisLoc = currStmt->args[0];
+  //   ensureTag(thisLoc, "EnvBinding");
+  //   int refIdx = getFlagNumber(thisLoc, "REFIDX");
+  //   return pushOP16(ctx, instructions, OP_put_loc, refIdx);
+  // }
   else if (isTag(currStmt, "JSImplicitBindingDeclaration"))
   {
     int OPID = getFlagNumber(currStmt, "OPID");
@@ -1699,9 +1864,9 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     case 5:
     case 6:
     {
-      currTarget = pushOP8(ctx, currTarget, OP_special_object, OPID);
+      pushOP8(ctx, instructions, OP_special_object, OPID);
       IridiumSEXP *loc = currStmt->args[0];
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
       break;
     }
     case 7:
@@ -1711,30 +1876,30 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       IridiumSEXP *args = currStmt->args[1];
       ensureTag(args, "List");
       assert(args->numArgs == 1);
-      currTarget = lowerToStack(ctx, currTarget, args->args[0]);
-      currTarget = pushOP(ctx, currTarget, OP_get_super);
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      lowerToStack(ctx, instructions, args->args[0]);
+      pushOP(ctx, instructions, OP_get_super);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
       break;
     }
     case 9:
     {
-      currTarget = pushOP(ctx, currTarget, OP_push_this);
+      pushOP(ctx, instructions, OP_push_this);
       IridiumSEXP *loc = currStmt->args[0];
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
       break;
     }
     case 10:
     {
-      currTarget = pushOPConst(ctx, currTarget, OP_push_const, JS_UNINITIALIZED);
+      pushOPConst(ctx, instructions, OP_push_const, JS_UNINITIALIZED);
       IridiumSEXP *loc = currStmt->args[0];
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
       break;
     }
     case 11:
     {
-      currTarget = pushOP(ctx, currTarget, OP_undefined);
+      pushOP(ctx, instructions, OP_undefined);
       IridiumSEXP *loc = currStmt->args[0];
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
       break;
     }
     default:
@@ -1742,126 +1907,172 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
       exit(1);
       break;
     }
-    return currTarget;
+    return;
   }
   else if (isTag(currStmt, "JSMODULEMETAINIT"))
   {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 6);
+    pushOP8(ctx, instructions, OP_special_object, 6);
 
     IridiumSEXP *thisLoc = currStmt->args[0];
     ensureTag(thisLoc, "EnvBinding");
     int refIdx = getFlagNumber(thisLoc, "REFIDX");
 
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
   else if (isTag(currStmt, "JSARGUMENTSINIT"))
   {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 0);
+    pushOP8(ctx, instructions, OP_special_object, 0);
 
     IridiumSEXP *argsLoc = currStmt->args[0];
     ensureTag(argsLoc, "EnvBinding");
     int refIdx = getFlagNumber(argsLoc, "REFIDX");
 
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
   else if (isTag(currStmt, "JSMARGUMENTSINIT"))
   {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 1);
+    pushOP8(ctx, instructions, OP_special_object, 1);
 
     IridiumSEXP *argsLoc = currStmt->args[0];
     ensureTag(argsLoc, "EnvBinding");
     int refIdx = getFlagNumber(argsLoc, "REFIDX");
 
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
   // else if (isTag(currStmt, "CallSite"))
   // {
-  //   currTarget = lowerToStack(ctx, currTarget, currStmt);
-  //   return pushOP(ctx, currTarget, OP_drop);
+  //   lowerToStack(ctx, instructions, currStmt);
+  //   return pushOP(ctx, instructions, OP_drop);
   // }
   else if (isTag(currStmt, "JSSUPEROBJINIT"))
   {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 4);
-    currTarget = pushOP(ctx, currTarget, OP_get_super);
+    pushOP8(ctx, instructions, OP_special_object, 4);
+    pushOP(ctx, instructions, OP_get_super);
     IridiumSEXP *targetBinding = currStmt->args[0];
     ensureTag(targetBinding, "EnvBinding");
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
   else if (isTag(currStmt, "JSNEWTARGETINIT"))
   {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 3);
+    pushOP8(ctx, instructions, OP_special_object, 3);
     IridiumSEXP *targetBinding = currStmt->args[0];
     ensureTag(targetBinding, "EnvBinding");
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
   else if (isTag(currStmt, "JSSUPERCTRINIT"))
   {
-    currTarget = pushOP8(ctx, currTarget, OP_special_object, 2);
-    currTarget = pushOP(ctx, currTarget, OP_get_super);
+    pushOP8(ctx, instructions, OP_special_object, 2);
+    pushOP(ctx, instructions, OP_get_super);
     IridiumSEXP *targetBinding = currStmt->args[0];
     ensureTag(targetBinding, "EnvBinding");
     int refIdx = getFlagNumber(targetBinding, "REFIDX");
-    return pushOP16(ctx, currTarget, OP_put_loc, refIdx);
+    return pushOP16(ctx, instructions, OP_put_loc, refIdx);
   }
+  // else if (isTag(currStmt, "JSHOMEOBJ"))
+  // {
+  //   pushOP8(ctx, instructions, OP_special_object, 4);
+  //   IridiumSEXP *targetBinding = currStmt->args[0];
+  //   ensureTag(targetBinding, "EnvBinding");
+  //   int refIdx = getFlagNumber(targetBinding, "REFIDX");
+  //   return pushOP16(ctx, instructions, OP_put_loc, refIdx);
+  // }
+  // else if (isTag(currStmt, "JSToObject"))
+  // {
+  //   lowerToStack(ctx, instructions, currStmt->args[0]);
+  //   pushOP(ctx, instructions, OP_to_object);
 
+  //   IridiumSEXP *stackLocation = currStmt->args[1];
+  //   int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+  //   if (isTag(stackLocation, "EnvBinding"))
+  //   {
+  //     pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
+  //   }
+  //   else if (isTag(stackLocation, "RemoteEnvBinding"))
+  //   {
+  //     pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
+  //   }
+  //   else
+  //   {
+  //     fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
+  //   }
+  // }
   else if (isTag(currStmt, "JSPrivateFieldWrite"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]);
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]);
-    return pushOP(ctx, currTarget, OP_define_private_field);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
+    lowerToStack(ctx, instructions, currStmt->args[1]);
+    lowerToStack(ctx, instructions, currStmt->args[2]);
+    return pushOP(ctx, instructions, OP_define_private_field);
   }
   else if (isTag(currStmt, "JSInitialYield"))
   {
-    return pushOP(ctx, currTarget, OP_initial_yield);
+    return pushOP(ctx, instructions, OP_initial_yield);
   }
+  // else if (isTag(currStmt, "JSClassMethodDefine"))
+  // {
+  //   IridiumSEXP *where = currStmt->args[0];
+  //   lowerToStack(ctx, instructions, where);
+
+  //   IridiumSEXP *what = currStmt->args[2];
+  //   lowerToStack(ctx, instructions, what);
+
+  //   IridiumSEXP *field = currStmt->args[1];
+  //   ensureTag(field, "String");
+  //   JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+  //   pushOP32(ctx, instructions, OP_define_method, fieldAtom);
+  //   uint8_t op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
+  //   return push8(ctx, instructions, op_flag);
+  // }
   else if (isTag(currStmt, "JSCopyDataProperties"))
   {
     // exc_obj
     IridiumSEXP *exc_obj = currStmt->args[0];
-    currTarget = lowerToStack(ctx, currTarget, exc_obj);
+    lowerToStack(ctx, instructions, exc_obj);
 
     // source
     IridiumSEXP *source = currStmt->args[1];
-    currTarget = lowerToStack(ctx, currTarget, source);
+    lowerToStack(ctx, instructions, source);
 
     // target
     IridiumSEXP *target = currStmt->args[2];
-    currTarget = lowerToStack(ctx, currTarget, target);
+    lowerToStack(ctx, instructions, target);
 
     // OP_copy_data_properties
-    currTarget = pushOP16(ctx, currTarget, OP_copy_data_properties, 68);
+    pushOP16(ctx, instructions, OP_copy_data_properties, 68);
 
     bool safe = getFlagBoolean(currStmt, "SAFE");
     bool thisInit = getFlagBoolean(currStmt, "THISINIT");
     bool isStrict = !hasFlag(currStmt, "SLOPPY");
 
     IridiumSEXP *loc = currStmt->args[3];
-    currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
 
-    currTarget = pushOP(ctx, currTarget, OP_drop);
-    return pushOP(ctx, currTarget, OP_drop);
+    pushOP(ctx, instructions, OP_drop);
+    return pushOP(ctx, instructions, OP_drop);
   }
+  // else if (isTag(currStmt, "JSIteratorClose"))
+  // {
+  //   return pushOP(ctx, instructions, OP_iterator_close);
+  // }
   else if (isTag(currStmt, "Ret"))
   {
-    return pushOP(ctx, currTarget, OP_ret);
+    return pushOP(ctx, instructions, OP_ret);
   }
   else if (isTag(currStmt, "Yield"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]);
-    currTarget = pushOP(ctx, currTarget, OP_yield);
+    lowerToStack(ctx, instructions, currStmt->args[0]);
+    pushOP(ctx, instructions, OP_yield);
 
     IridiumSEXP *stackLocation = currStmt->args[1];
     int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
     if (isTag(stackLocation, "EnvBinding"))
     {
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+      pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
     }
     else if (isTag(stackLocation, "RemoteEnvBinding"))
     {
-      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+      pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
     }
     else
     {
@@ -1872,11 +2083,11 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
     if (isTag(stackLocation, "EnvBinding"))
     {
-      currTarget = pushOP16(ctx, currTarget, OP_put_loc_check, stackLocationIDX);
+      pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
     }
     else if (isTag(stackLocation, "RemoteEnvBinding"))
     {
-      currTarget = pushOP16(ctx, currTarget, OP_put_var_ref_check, stackLocationIDX);
+      pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
     }
     else
     {
@@ -1914,10 +2125,10 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     }
 
     char *name = getFlagString(currStmt, "NAME");
-    currTarget = pushOP32Flags(ctx, currTarget, OP_check_define_var, JS_NewAtom(ctx, name), check_flag);
-    currTarget = pushOP32Flags(ctx, currTarget, OP_define_var, JS_NewAtom(ctx, name), define_flag);
+    pushOP32Flags(ctx, instructions, OP_check_define_var, JS_NewAtom(ctx, name), check_flag);
+    pushOP32Flags(ctx, instructions, OP_define_var, JS_NewAtom(ctx, name), define_flag);
 
-    return currTarget;
+    return;
   }
   else if (isTag(currStmt, "JSFuncDecl"))
   {
@@ -1927,9 +2138,9 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     if (isTag(loc, "GlobalBinding"))
     {
       char *name = getFlagString(loc, "NAME");
-      currTarget = pushOP32Flags(ctx, currTarget, OP_check_define_var, JS_NewAtom(ctx, name), 64);
-      currTarget = lowerToStack(ctx, currTarget, closure);
-      currTarget = pushOP32Flags(ctx, currTarget, OP_define_func, JS_NewAtom(ctx, name), 0);
+      pushOP32Flags(ctx, instructions, OP_check_define_var, JS_NewAtom(ctx, name), 64);
+      lowerToStack(ctx, instructions, closure);
+      pushOP32Flags(ctx, instructions, OP_define_func, JS_NewAtom(ctx, name), 0);
     }
     else
     {
@@ -1939,10 +2150,10 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
   }
   else if (isTag(currStmt, "JSAppend"))
   {
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[0]); // tmp
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[1]); // insertionIdx
-    currTarget = lowerToStack(ctx, currTarget, currStmt->args[2]); // spreadVal
-    currTarget = pushOP(ctx, currTarget, OP_append);
+    lowerToStack(ctx, instructions, currStmt->args[0]); // tmp
+    lowerToStack(ctx, instructions, currStmt->args[1]); // insertionIdx
+    lowerToStack(ctx, instructions, currStmt->args[2]); // spreadVal
+    pushOP(ctx, instructions, OP_append);
 
     bool safe = getFlagBoolean(currStmt, "SAFE");
     bool thisInit = getFlagBoolean(currStmt, "THISINIT");
@@ -1950,33 +2161,33 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     { // InsertionIdxLoc
       IridiumSEXP *insertionLoc = currStmt->args[3];
-      currTarget = storeWhatevesOnTheStack(ctx, insertionLoc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, insertionLoc, instructions, safe, thisInit, isStrict, false);
     }
 
     { // tempLoc
       IridiumSEXP *tmpLoc = currStmt->args[4];
-      currTarget = storeWhatevesOnTheStack(ctx, tmpLoc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, tmpLoc, instructions, safe, thisInit, isStrict, false);
     }
   }
   else if (isTag(currStmt, "JSDefineObjProp"))
   {
     IridiumSEXP *obj = currStmt->args[0];
-    currTarget = lowerToStack(ctx, currTarget, obj);
+    lowerToStack(ctx, instructions, obj);
     IridiumSEXP *field = currStmt->args[1];
     IridiumSEXP *val = currStmt->args[2];
 
     if (isTag(field, "String"))
     {
-      currTarget = lowerToStack(ctx, currTarget, val);
+      lowerToStack(ctx, instructions, val);
       JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-      currTarget = pushOP32(ctx, currTarget, OP_define_field, fieldAtom);
+      pushOP32(ctx, instructions, OP_define_field, fieldAtom);
     }
     else
     {
-      currTarget = lowerToStack(ctx, currTarget, field);
-      currTarget = lowerToStack(ctx, currTarget, val);
-      currTarget = pushOP(ctx, currTarget, OP_define_array_el);
-      currTarget = pushOP(ctx, currTarget, OP_drop);
+      lowerToStack(ctx, instructions, field);
+      lowerToStack(ctx, instructions, val);
+      pushOP(ctx, instructions, OP_define_array_el);
+      pushOP(ctx, instructions, OP_drop);
     }
 
     bool safe = getFlagBoolean(currStmt, "SAFE");
@@ -1985,7 +2196,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     { // tempLoc
       IridiumSEXP *loc = currStmt->args[3];
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
     }
   }
   else if (isTag(currStmt, "JSDefineObjMethod"))
@@ -2010,21 +2221,21 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     }
 
     IridiumSEXP *obj = currStmt->args[0];
-    currTarget = lowerToStack(ctx, currTarget, obj);
+    lowerToStack(ctx, instructions, obj);
     IridiumSEXP *field = currStmt->args[1];
     IridiumSEXP *val = currStmt->args[2];
 
     if (isTag(field, "String"))
     {
-      currTarget = lowerToStack(ctx, currTarget, val);
+      lowerToStack(ctx, instructions, val);
       JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-      currTarget = pushOP32Flags(ctx, currTarget, OP_define_method, fieldAtom, op_flag);
+      pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
     }
     else
     {
-      currTarget = lowerToStack(ctx, currTarget, field);
-      currTarget = lowerToStack(ctx, currTarget, val);
-      currTarget = pushOPFlags(ctx, currTarget, OP_define_method_computed, op_flag);
+      lowerToStack(ctx, instructions, field);
+      lowerToStack(ctx, instructions, val);
+      pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
     }
 
     bool safe = getFlagBoolean(currStmt, "SAFE");
@@ -2033,7 +2244,7 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
 
     { // tempLoc
       IridiumSEXP *loc = currStmt->args[3];
-      currTarget = storeWhatevesOnTheStack(ctx, loc, currTarget, safe, thisInit, isStrict, false);
+      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
     }
   }
   else
@@ -2041,85 +2252,90 @@ BCLList *handleIriStmt(JSContext *ctx, BCLList *currTarget, IridiumSEXP *currStm
     fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
     exit(1);
   }
-  return currTarget;
+  return;
 }
 
-BCLList *handleBB(JSContext *ctx, BCLList *currTarget, IridiumSEXP *bb)
+void handleBB(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *bb)
 {
   ensureTag(bb, "BB");
 
   for (int stmtIDX = 0; stmtIDX < bb->numArgs; stmtIDX++)
   {
     IridiumSEXP *currStmt = bb->args[stmtIDX];
-    currTarget = handleIriStmt(ctx, currTarget, currStmt);
+    handleIriStmt(ctx, instructions, currStmt);
   }
-
-  return currTarget;
+  return;
 }
 
 // ============== Code Generation ============== //
 
 // ============== Helper Functions ============== //
 
-int getPoolSize(BCLList *bcList)
+int getPoolSize(const vector<BCInstruction> &instructions)
 {
-  if (bcList)
+  int count = 0;
+  for (size_t i = 1; i < instructions.size(); ++i)
   {
-    if (bcList->hasPoolData)
+    auto &inst = instructions[i];
+    if (inst.hasPoolData)
     {
-      return 1 + getPoolSize(bcList->next);
+      count++;
     }
-    return getPoolSize(bcList->next);
   }
-  return 0;
+  return count;
 }
 
-int getBCSize(BCLList *bcList)
+int getBCSize(const vector<BCInstruction> &instructions)
 {
-  if (bcList)
+  int count = 0;
+  for (size_t i = 1; i < instructions.size(); ++i)
   {
-    return short_opcode_info(bcList->bc).size + getBCSize(bcList->next);
+    auto &inst = instructions[i];
+    count += short_opcode_info(inst.bc).size;
   }
-  return 0;
+  return count;
 }
 
-void populateCPool(JSContext *ctx, int offset, BCLList *bcList, JSValue *cpool)
+void populateCPool(JSContext *ctx, vector<BCInstruction> &instructions, JSValue *cpool)
 {
-  if (bcList)
+  int offset = 0;
+  for (size_t i = 1; i < instructions.size(); ++i)
   {
-    if (bcList->hasPoolData)
+    auto &inst = instructions[i];
+    if (inst.hasPoolData)
     {
       // fprintf(stdout, "Adding to cpool at offset %d\n", offset);
-      *(cpool + offset) = JS_DupValue(ctx, bcList->poolData);
-      bcList->data.four = offset++;
+      *(cpool + offset) = JS_DupValue(ctx, inst.poolData);
+      inst.data.four = offset;
+      offset++;
     }
-    return populateCPool(ctx, offset, bcList->next, cpool);
   }
 }
 
-void populateLambdaPoolReferences(JSContext *ctx, BCLList *bcList, int poolOffset)
+void populateLambdaPoolReferences(JSContext *ctx, vector<BCInstruction> &instructions, int poolOffset)
 {
-  if (bcList)
+  for (size_t i = 1; i < instructions.size(); ++i)
   {
-    if (bcList->lambdaPoolReference)
+    auto &inst = instructions[i];
+    if (inst.lambdaPoolReference)
     {
-      if (bcList->valueSize == 1)
+      if (inst.valueSize == 1)
       {
-        int targetOffset = poolOffset + (bcList->data.one);
-        // fprintf(stdout, "Patching lambda offset %d to %d\n", bcList->data.one, targetOffset);
-        bcList->data.one = targetOffset;
+        int targetOffset = poolOffset + (inst.data.one);
+        // fprintf(stdout, "Patching lambda offset %d to %d\n", inst.data.one, targetOffset);
+        inst.data.one = targetOffset;
       }
-      else if (bcList->valueSize == 2)
+      else if (inst.valueSize == 2)
       {
-        int targetOffset = poolOffset + (bcList->data.two);
-        // fprintf(stdout, "Patching lambda offset %d to %d\n", bcList->data.two, targetOffset);
-        bcList->data.two = targetOffset;
+        int targetOffset = poolOffset + (inst.data.two);
+        // fprintf(stdout, "Patching lambda offset %d to %d\n", inst.data.two, targetOffset);
+        inst.data.two = targetOffset;
       }
-      else if (bcList->valueSize == 4)
+      else if (inst.valueSize == 4)
       {
-        int targetOffset = poolOffset + (bcList->data.four);
-        // fprintf(stdout, "Patching lambda offset %d to %d\n", bcList->data.four, targetOffset);
-        bcList->data.four = targetOffset;
+        int targetOffset = poolOffset + (inst.data.four);
+        // fprintf(stdout, "Patching lambda offset %d to %d\n", inst.data.four, targetOffset);
+        inst.data.four = targetOffset;
       }
       else
       {
@@ -2127,96 +2343,136 @@ void populateLambdaPoolReferences(JSContext *ctx, BCLList *bcList, int poolOffse
         exit(1);
       }
     }
-    return populateLambdaPoolReferences(ctx, bcList->next, poolOffset);
   }
 }
 
-int findOffset(BCLList *bcList, int offset, int targetOffset)
+int findOffset(vector<BCInstruction> &instructions, int targetOffset)
 {
-  if (bcList)
+  int offset = 0;
+  for (size_t i = 1; i < instructions.size(); ++i)
   {
-    if (bcList->isLabel && bcList->label == targetOffset)
+    auto &inst = instructions[i];
+    if (inst.isLabel && inst.label == targetOffset)
     {
-      // return offset + short_opcode_info(bcList->bc).size - 1;
-      return offset - 1;
+      return offset + short_opcode_info(inst.bc).size - 1;
+      // return offset-1;
     }
     else
     {
-      return findOffset(bcList->next, offset + short_opcode_info(bcList->bc).size, targetOffset);
+      offset += short_opcode_info(inst.bc).size;
     }
   }
   fprintf(stderr, "Failed to find BC offset for %d\n", targetOffset);
   exit(1);
 }
 
-void patchGotos(BCLList *bcList, int currOffset, BCLList *startBcList)
+void patchGotos(vector<BCInstruction> &instructions)
 {
-  if (bcList)
+  int currOffset = 0;
+  for (size_t i = 1; i < instructions.size(); ++i)
   {
-    if (bcList->bc == OP_goto || bcList->bc == OP_catch || bcList->bc == OP_gosub)
+    auto &inst = instructions[i];
+    if (inst.bc == OP_goto || inst.bc == OP_catch || inst.bc == OP_gosub)
     {
-      uint32_t iriOffset = bcList->data.four;
-      int actualOffset = findOffset(startBcList, 0, iriOffset);
+      uint32_t iriOffset = inst.data.four;
+      int actualOffset = findOffset(instructions, iriOffset);
       // fprintf(stdout, "Patching offset %d to %d\n", iriOffset, actualOffset);
-      bcList->data.four = actualOffset - currOffset;
+      inst.data.four = actualOffset - currOffset;
     }
-    else if (bcList->bc == OP_if_true || bcList->bc == OP_if_false)
+    else if (inst.bc == OP_if_true || inst.bc == OP_if_false)
     {
-      uint32_t iriOffset = bcList->data.four;
-      int actualOffset = findOffset(startBcList, 0, iriOffset);
+      uint32_t iriOffset = inst.data.four;
+      int actualOffset = findOffset(instructions, iriOffset);
       // fprintf(stdout, "Patching (ifTrue) offset %d to %d\n", iriOffset, actualOffset);
-      bcList->data.four = (actualOffset - currOffset);
+      inst.data.four = actualOffset - currOffset;
     }
-    patchGotos(bcList->next, currOffset + short_opcode_info(bcList->bc).size, startBcList);
+    currOffset += short_opcode_info(inst.bc).size;
   }
 }
 
-void freeBCLList(JSContext *ctx, BCLList *bcList)
+void freeBCLList(JSContext *ctx, vector<BCInstruction> &instructions)
 {
-  if (bcList)
+  for (auto &inst : instructions)
   {
-    freeBCLList(ctx, bcList->next);
-    if (bcList->hasPoolData)
+    if (inst.hasPoolData)
     {
-      JS_FreeValue(ctx, bcList->poolData);
+      JS_FreeValue(ctx, inst.poolData);
     }
-    free(bcList);
   }
+  instructions.clear();
+  instructions.shrink_to_fit();
 }
 
-void populateBytecode(uint8_t *target, BCLList *currBC, int poolIDX)
+void populateBytecode(uint8_t *target, const std::vector<BCInstruction> &instructions, size_t index, int &poolIDX)
 {
-  if (!currBC)
+  if (index >= instructions.size())
     return;
-  if (currBC->hasPoolData)
+
+  const BCInstruction &currBC = instructions[index];
+
+  if (currBC.hasPoolData)
   {
-    currBC->data.four = poolIDX++;
-    assert(currBC->valueSize == 4);
+    // Note: This modifies poolIDX, but we can't modify the original data
+    // You may need to handle pool data differently depending on your use case
+    assert(currBC.valueSize == 4);
   }
-  target[0] = currBC->bc;
-  if (currBC->valueSize == 1)
+
+  target[0] = currBC.bc;
+
+  if (currBC.valueSize == 1)
   {
     uint8_t *t = (uint8_t *)(target + 1);
-    *t = currBC->data.one;
+    *t = currBC.hasPoolData ? poolIDX++ : currBC.data.one;
   }
-  else if (currBC->valueSize == 2)
+  else if (currBC.valueSize == 2)
   {
     uint16_t *t = (uint16_t *)(target + 1);
-    *t = currBC->data.two;
+    *t = currBC.hasPoolData ? poolIDX++ : currBC.data.two;
   }
-  else if (currBC->valueSize == 4)
+  else if (currBC.valueSize == 4)
   {
     uint32_t *t = (uint32_t *)(target + 1);
-    *t = currBC->data.four;
+    *t = currBC.hasPoolData ? poolIDX++ : currBC.data.four;
   }
 
-  if (currBC->hasFlags)
+  // if (currBC.bc == OP_define_method || currBC.bc == OP_define_class)
+  // {
+  //   if (index + 1 < instructions.size())
+  //   {
+  //     uint8_t *t = (uint8_t *)(target + 5); // {0: OP} {atom: 1 2 3 4} {flag: 5}
+  //     // Next slot is the op_flag
+  //     *t = instructions[index + 1].bc;
+  //     return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 2, poolIDX);
+  //   }
+  //   return;
+  // }
+
+  // if (currBC.bc == OP_define_method_computed)
+  // {
+  //   if (index + 1 < instructions.size())
+  //   {
+  //     uint8_t *t = (uint8_t *)(target + 2); // {0: OP} {flag: 1}
+  //     // Next slot is the op_flag
+  //     *t = instructions[index + 1].bc;
+  //     return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 2, poolIDX);
+  //   }
+  //   return;
+  // }
+
+  if (currBC.hasFlags)
   {
-    uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC->bc).size - 1);
-    *t = currBC->flags;
+    uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC.bc).size - 1);
+    *t = currBC.flags;
   }
 
-  return populateBytecode(target + short_opcode_info(currBC->bc).size, currBC->next, poolIDX);
+  return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 1, poolIDX);
+}
+
+// Alternative wrapper function to maintain similar interface
+void populateBytecode(uint8_t *target, const std::vector<BCInstruction> &instructions, int poolIDX = 0)
+{
+  int mutablePoolIDX = poolIDX;
+  populateBytecode(target, instructions, 1, mutablePoolIDX);
 }
 
 typedef struct StackSizeState
@@ -2313,14 +2569,14 @@ int compute_stack_size(JSContext *ctx, uint8_t *bc_buf, int bcSize)
   const JSOpCode *oi;
   s->bc_len = bcSize;
   /* bc_len > 0 */
-  s->stack_level_tab = js_malloc(ctx, sizeof(s->stack_level_tab[0]) *
-                                          s->bc_len);
+  s->stack_level_tab = (uint16_t *)js_malloc(ctx, sizeof(s->stack_level_tab[0]) *
+                                                      s->bc_len);
   if (!s->stack_level_tab)
     return -1;
   for (i = 0; i < s->bc_len; i++)
     s->stack_level_tab[i] = 0xffff;
   s->pc_stack = NULL;
-  s->catch_pos_tab = js_malloc(ctx, sizeof(s->catch_pos_tab[0]) * s->bc_len);
+  s->catch_pos_tab = (int32_t *)js_malloc(ctx, sizeof(s->catch_pos_tab[0]) * s->bc_len);
   if (!s->catch_pos_tab)
     goto fail;
 
@@ -2511,50 +2767,49 @@ fail:
 
 // ============== Helper Functions ============== //
 
-void dumpBCLList(JSContext *ctx, BCLList *temp)
+void dumpBCLList(JSContext *ctx, vector<BCInstruction> &instructions)
 {
   int i = 0;
-  while (temp)
+  for (auto &inst : instructions)
   {
-    fprintf(stdout, "BC[%d]: %s (size = %d bytes)", i, short_opcode_info(temp->bc).name, short_opcode_info(temp->bc).size);
-    // assert(short_opcode_info(temp->bc).size == (temp->valueSize + 1));
+    fprintf(stdout, "BC[%d]: %s (size = %d bytes)", i, short_opcode_info(inst.bc).name, short_opcode_info(inst.bc).size);
+    assert(short_opcode_info(inst.bc).size == (inst.valueSize + 1));
 
-    if (temp->bc == OP_push_const)
+    if (inst.bc == OP_push_const)
     {
-      JSValue jsvalue = temp->poolData;
-      fprintf(stdout, ", DATA_32: %d (\"%s\")\n", temp->data.four, JS_ToCString(ctx, jsvalue));
+      JSValue jsvalue = inst.poolData;
+      fprintf(stdout, ", DATA_32: %d (\"%s\")\n", inst.data.four, JS_ToCString(ctx, jsvalue));
     }
-    else if (temp->bc == OP_push_atom_value || temp->bc == OP_get_var || temp->bc == OP_get_field)
+    else if (inst.bc == OP_push_atom_value || inst.bc == OP_get_var || inst.bc == OP_get_field)
     {
-      fprintf(stdout, ", StringData(%d): \"%s\"\n", temp->data.four, JS_AtomToCString(ctx, temp->data.four));
+      fprintf(stdout, ", StringData(%d): \"%s\"\n", inst.data.four, JS_AtomToCString(ctx, inst.data.four));
     }
-    else if (temp->bc == OP_fclosure)
+    else if (inst.bc == OP_fclosure)
     {
-      fprintf(stdout, ", DATA_32: %d (<Closure>)\n", temp->data.four);
+      fprintf(stdout, ", DATA_32: %d (<Closure>)\n", inst.data.four);
     }
     else
     {
-      switch (short_opcode_info(temp->bc).size)
+      switch (short_opcode_info(inst.bc).size)
       {
       case 2:
-        fprintf(stdout, ", DATA_8: %d\n", temp->data.one);
+        fprintf(stdout, ", DATA_8: %d\n", inst.data.one);
         break;
       case 3:
-        fprintf(stdout, ", DATA_16: %d\n", temp->data.two);
+        fprintf(stdout, ", DATA_16: %d\n", inst.data.two);
         break;
       case 5:
-        fprintf(stdout, ", DATA_32: %d\n", temp->data.four);
+        fprintf(stdout, ", DATA_32: %d\n", inst.data.four);
         break;
       default:
         fprintf(stdout, "\n");
       }
     }
-    i += short_opcode_info(temp->bc).size;
-    temp = temp->next;
+    i += short_opcode_info(inst.bc).size;
   }
 }
 
-JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *startBC)
+JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCInstruction> &instructions)
 {
   bool isStrict = hasFlag(bbContainer, "STRICT");
 
@@ -2568,9 +2823,9 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   int var_count = 0;
   int closure_var_count = remoteBindingsSEXP->numArgs;
   int lambda_count = lambdasSEXP->numArgs;
-  int bc_pool_count = getPoolSize(startBC);
+  int bc_pool_count = getPoolSize(instructions);
   int cpool_count = bc_pool_count + lambda_count;
-  int byte_code_len = getBCSize(startBC);
+  int byte_code_len = getBCSize(instructions);
 
   // Initialize var/arg count
   for (int i = 0; i < localBindingsSEXP->numArgs; i++)
@@ -2593,7 +2848,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   function_size += byte_code_len;
 
   // Allocate function object
-  JSFunctionBytecode *b = js_mallocz(ctx, function_size);
+  JSFunctionBytecode *b = (JSFunctionBytecode *)js_mallocz(ctx, function_size);
   if (!b)
   {
     fprintf(stderr, "Failed to generate QJS function from Iridium code");
@@ -2617,6 +2872,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
     b->vardefs = (JSVarDef *)((uint8_t *)b + vardefs_offset);
     b->arg_count = arg_count;
     b->var_count = var_count;
+    // b->defined_arg_count = 0;
   }
 
   if (closure_var_count > 0)
@@ -2662,19 +2918,21 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   b->realm = JS_DupContext(ctx);
 
   // Populate Cpool
-  populateCPool(ctx, 0, startBC, b->cpool);
-  populateLambdaPoolReferences(ctx, startBC, bc_pool_count);
-
+  populateCPool(ctx, instructions, b->cpool);
+  populateLambdaPoolReferences(ctx, instructions, bc_pool_count);
   // Populate Bytecode and compute stack size
-  populateBytecode(b->byte_code_buf, startBC, 0);
+  populateBytecode(b->byte_code_buf, instructions, 0);
+
   b->stack_size = compute_stack_size(ctx, b->byte_code_buf, b->byte_code_len);
 
-  // Initialize Args + Var Defs
+  // Initialize Arg + Var Defs
   for (int i = 0; i < var_count; i++)
   {
     IridiumSEXP *envBinding = localBindingsSEXP->args[i];
     ensureTag(envBinding, "EnvBinding");
 
+    // int refIDX = getFlagNumber(envBinding, "REFIDX");
+    // assert(refIDX == i && "Local VarDef idx not found");
     int scope_level = getFlagNumber(envBinding, "Scope");
     int scope_next = getFlagNumber(envBinding, "ParentScope");
     char *name = getFlagString(envBinding, "NAME");
@@ -2691,6 +2949,8 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
 
     if (hasFlag(envBinding, "JSARG") || hasFlag(envBinding, "JSRESTARG"))
     {
+      // fprintf(stderr, "JSARG not expected...");
+      // exit(1);
       // NONE
     }
     else if (hasFlag(envBinding, "JSLET") || hasFlag(envBinding, "JSVAR"))
@@ -2767,6 +3027,8 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
     }
   }
 
+  // printf("ADDR: %p\n", b);
+
   // Set fun kind
   if (hasFlag(bbContainer, "GENERATOR") && hasFlag(bbContainer, "ASYNC"))
   {
@@ -2825,10 +3087,485 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, BCLList *s
   return func_val;
 }
 
+struct OffsetMapping
+{
+  int originalOffset;
+  int newOffset;
+  bool isNop;
+  size_t instructionIndex;
+};
+
+// Build a mapping from old offsets to new offsets after NOP removal
+std::vector<OffsetMapping> buildOffsetMapping(const std::vector<BCInstruction> &instructions)
+{
+  std::vector<OffsetMapping> mapping;
+  int originalOffset = 0;
+  int newOffset = 0;
+
+  for (size_t i = 1; i < instructions.size(); ++i)
+  {
+    const auto &inst = instructions[i];
+    OffsetMapping entry;
+    entry.originalOffset = originalOffset;
+    entry.newOffset = newOffset;
+    entry.isNop = (inst.bc == OP_nop && inst.isLabel);
+    entry.instructionIndex = i;
+
+    mapping.push_back(entry);
+
+    int instSize = short_opcode_info(inst.bc).size;
+    originalOffset += instSize;
+
+    // Only advance newOffset if this isn't a NOP we're removing
+    if (!entry.isNop)
+    {
+      newOffset += instSize;
+    }
+  }
+
+  return mapping;
+}
+
+// Find the new offset for a given original absolute offset
+int findNewAbsoluteOffset(const std::vector<OffsetMapping> &mapping, int originalAbsoluteOffset)
+{
+  // Find the instruction at or just before the target offset
+  for (size_t i = 0; i < mapping.size(); ++i)
+  {
+    if (mapping[i].originalOffset == originalAbsoluteOffset)
+    {
+      // If this is a NOP, find next non-NOP
+      if (mapping[i].isNop)
+      {
+        for (size_t j = i + 1; j < mapping.size(); ++j)
+        {
+          if (!mapping[j].isNop)
+          {
+            return mapping[j].newOffset;
+          }
+        }
+        // If no non-NOP found, this is likely end of function
+        if (!mapping.empty())
+        {
+          return mapping.back().newOffset;
+        }
+      }
+      return mapping[i].newOffset;
+    }
+
+    // If we've passed the target offset, use the previous instruction
+    if (mapping[i].originalOffset > originalAbsoluteOffset && i > 0)
+    {
+      // Handle case where target is in the middle of an instruction
+      return mapping[i - 1].newOffset + (originalAbsoluteOffset - mapping[i - 1].originalOffset);
+    }
+  }
+
+  // If we're beyond all instructions, return the last offset
+  if (!mapping.empty())
+  {
+    return mapping.back().newOffset + (originalAbsoluteOffset - mapping.back().originalOffset);
+  }
+
+  return originalAbsoluteOffset;
+}
+
+// Create a new instruction vector with NOPs removed and offsets patched
+std::vector<BCInstruction> removeNOPs(JSContext *ctx, std::vector<BCInstruction> &instructions)
+{
+  // Build offset mapping
+  std::vector<OffsetMapping> mapping = buildOffsetMapping(instructions);
+
+  // Create new instruction vector
+  std::vector<BCInstruction> newInstructions;
+
+  // Keep the first dummy instruction
+  if (!instructions.empty())
+  {
+    newInstructions.push_back(instructions[0]);
+  }
+
+  // Process each instruction
+  int currentOriginalOffset = 0;
+  int currentNewOffset = 0;
+
+  for (size_t i = 1; i < instructions.size(); ++i)
+  {
+    const auto &inst = instructions[i];
+    int instSize = short_opcode_info(inst.bc).size;
+
+    // Skip NOPs that are just labels
+    if (inst.bc == OP_nop && inst.isLabel)
+    {
+      currentOriginalOffset += instSize;
+      continue;
+    }
+
+    // Copy the instruction
+    BCInstruction newInst = inst;
+
+    // Patch jump offsets (which are relative in QuickJS)
+    bool needsPatching = false;
+    int originalTargetAbsolute = 0;
+
+    switch (inst.bc)
+    {
+    case OP_goto:
+    case OP_catch:
+    case OP_gosub:
+      needsPatching = true;
+      // Relative offset is from position after the opcode byte
+      originalTargetAbsolute = currentOriginalOffset + 1 + (int32_t)inst.data.four;
+      break;
+
+    case OP_if_true:
+    case OP_if_false:
+      needsPatching = true;
+      // Relative offset is from position after the opcode byte
+      originalTargetAbsolute = currentOriginalOffset + 1 + (int32_t)inst.data.four;
+      break;
+
+    case OP_goto16:
+      needsPatching = true;
+      originalTargetAbsolute = currentOriginalOffset + 1 + (int16_t)inst.data.two;
+      break;
+
+    case OP_goto8:
+    case OP_if_true8:
+    case OP_if_false8:
+      needsPatching = true;
+      originalTargetAbsolute = currentOriginalOffset + 1 + (int8_t)inst.data.one;
+      break;
+
+    case OP_with_get_var:
+    case OP_with_delete_var:
+      needsPatching = true;
+      // These have offset at bytes 5-8 (after atom)
+      originalTargetAbsolute = currentOriginalOffset + 5 + (int32_t)inst.data.four;
+      break;
+
+    case OP_with_make_ref:
+    case OP_with_get_ref:
+    case OP_with_get_ref_undef:
+    case OP_with_put_var:
+      // Handle if these instructions are used
+      break;
+    }
+
+    if (needsPatching)
+    {
+      int newTargetAbsolute = findNewAbsoluteOffset(mapping, originalTargetAbsolute);
+      int newRelativeOffset = 0;
+
+      // Calculate new relative offset based on instruction type
+      switch (inst.bc)
+      {
+      case OP_goto:
+      case OP_catch:
+      case OP_gosub:
+      case OP_if_true:
+      case OP_if_false:
+        // Offset is from position after opcode byte
+        newRelativeOffset = newTargetAbsolute - (currentNewOffset + 1);
+        newInst.data.four = (uint32_t)newRelativeOffset;
+        break;
+
+      case OP_goto16:
+        newRelativeOffset = newTargetAbsolute - (currentNewOffset + 1);
+        // Check if it still fits in 16 bits
+        if (newRelativeOffset >= -32768 && newRelativeOffset <= 32767)
+        {
+          newInst.data.two = (uint16_t)newRelativeOffset;
+        }
+        else
+        {
+          // Would need to convert to 32-bit version
+          fprintf(stderr, "Warning: 16-bit jump overflow after NOP removal\n");
+          // For now, convert to OP_goto (32-bit)
+          newInst.bc = OP_goto;
+          newInst.valueSize = 4;
+          newInst.data.four = (uint32_t)newRelativeOffset;
+        }
+        break;
+
+      case OP_goto8:
+        newRelativeOffset = newTargetAbsolute - (currentNewOffset + 1);
+        // Check if it still fits in 8 bits
+        if (newRelativeOffset >= -128 && newRelativeOffset <= 127)
+        {
+          newInst.data.one = (uint8_t)newRelativeOffset;
+        }
+        else if (newRelativeOffset >= -32768 && newRelativeOffset <= 32767)
+        {
+          // Convert to 16-bit version
+          newInst.bc = OP_goto16;
+          newInst.valueSize = 2;
+          newInst.data.two = (uint16_t)newRelativeOffset;
+        }
+        else
+        {
+          // Convert to 32-bit version
+          newInst.bc = OP_goto;
+          newInst.valueSize = 4;
+          newInst.data.four = (uint32_t)newRelativeOffset;
+        }
+        break;
+
+      case OP_if_true8:
+        newRelativeOffset = newTargetAbsolute - (currentNewOffset + 1);
+        if (newRelativeOffset >= -128 && newRelativeOffset <= 127)
+        {
+          newInst.data.one = (uint8_t)newRelativeOffset;
+        }
+        else
+        {
+          // Convert to 32-bit version
+          newInst.bc = OP_if_true;
+          newInst.valueSize = 4;
+          newInst.data.four = (uint32_t)newRelativeOffset;
+        }
+        break;
+
+      case OP_if_false8:
+        newRelativeOffset = newTargetAbsolute - (currentNewOffset + 1);
+        if (newRelativeOffset >= -128 && newRelativeOffset <= 127)
+        {
+          newInst.data.one = (uint8_t)newRelativeOffset;
+        }
+        else
+        {
+          // Convert to 32-bit version
+          newInst.bc = OP_if_false;
+          newInst.valueSize = 4;
+          newInst.data.four = (uint32_t)newRelativeOffset;
+        }
+        break;
+
+      case OP_with_get_var:
+      case OP_with_delete_var:
+        // Offset is from position after the atom (5 bytes from start)
+        newRelativeOffset = newTargetAbsolute - (currentNewOffset + 5);
+        newInst.data.four = (uint32_t)newRelativeOffset;
+        break;
+      }
+    }
+
+    newInstructions.push_back(newInst);
+    currentOriginalOffset += instSize;
+    currentNewOffset += short_opcode_info(newInst.bc).size;
+  }
+
+  return newInstructions;
+}
+
+// Updated patchGotos function that works with the new NOP-removed instructions
+void patchGotosAfterNOPRemoval(std::vector<BCInstruction> &instructions)
+{
+  int currOffset = 0;
+  for (size_t i = 1; i < instructions.size(); ++i)
+  {
+    auto &inst = instructions[i];
+
+    // These should already be patched by removeNOPs, but we need to handle
+    // the original label-based jumps from handleIriStmt
+    if (inst.bc == OP_goto || inst.bc == OP_catch || inst.bc == OP_gosub ||
+        inst.bc == OP_if_true || inst.bc == OP_if_false ||
+        inst.bc == OP_if_true8 || inst.bc == OP_if_false8)
+    {
+
+      // Find if this is still using the original Iridium label
+      // The data.four/two/one field contains the target label at this point
+      uint32_t iriLabel = inst.data.four;
+
+      // Find the actual offset for this label
+      int targetOffset = 0;
+      bool found = false;
+      int searchOffset = 0;
+
+      for (size_t j = 1; j < instructions.size(); ++j)
+      {
+        if (instructions[j].isLabel && instructions[j].label == iriLabel)
+        {
+          targetOffset = searchOffset;
+          found = true;
+          break;
+        }
+        searchOffset += short_opcode_info(instructions[j].bc).size;
+      }
+
+      if (found)
+      {
+        // Update with relative offset
+        int relativeOffset = targetOffset - currOffset;
+
+        switch (inst.bc)
+        {
+        case OP_goto:
+        case OP_catch:
+        case OP_gosub:
+        case OP_if_true:
+        case OP_if_false:
+          inst.data.four = relativeOffset;
+          break;
+        case OP_goto16:
+          inst.data.two = (uint16_t)relativeOffset;
+          break;
+        case OP_goto8:
+        case OP_if_true8:
+        case OP_if_false8:
+          inst.data.one = (uint8_t)relativeOffset;
+          break;
+        }
+      }
+    }
+
+    currOffset += short_opcode_info(inst.bc).size;
+  }
+}
+
+#include <algorithm>
+#include <unordered_map>
+#include <functional>
+
+struct PeepholePattern {
+  std::vector<OPCodeEnum> pattern;
+  std::function<bool(const std::vector<BCInstruction>&, size_t)> matcher;
+  std::function<std::vector<BCInstruction>(const std::vector<BCInstruction>&, size_t)> replacer;
+};
+
+class PeepholeOptimizer {
+private:
+  std::vector<PeepholePattern> patterns;
+  
+public:
+  PeepholeOptimizer() {
+      initializePatterns();
+  }
+  
+  void initializePatterns() {
+      // Pattern 5: Optimize small integer constants
+      patterns.push_back({
+          {OP_push_const},
+          [](const std::vector<BCInstruction>& instructions, size_t pos) {
+              if (!instructions[pos].hasPoolData) return false;
+              // Check if the constant is a small integer
+              JSValue val = instructions[pos].poolData;
+              if (JS_VALUE_GET_TAG(val) == JS_TAG_INT) {
+                  int32_t n = JS_VALUE_GET_INT(val);
+                  return n >= -1 && n <= 5;
+              }
+              return false;
+          },
+          [](const std::vector<BCInstruction>& instructions, size_t pos) {
+              std::vector<BCInstruction> result;
+              BCInstruction newInst;
+              JSValue val = instructions[pos].poolData;
+              int32_t n = JS_VALUE_GET_INT(val);
+              
+              // Use specialized push instructions for small integers
+              switch(n) {
+                  case -1: newInst.bc = OP_push_minus1; break;
+                  case 0: newInst.bc = OP_push_0; break;
+                  case 1: newInst.bc = OP_push_1; break;
+                  case 2: newInst.bc = OP_push_2; break;
+                  case 3: newInst.bc = OP_push_3; break;
+                  case 4: newInst.bc = OP_push_4; break;
+                  case 5: newInst.bc = OP_push_5; break;
+                  default: return std::vector<BCInstruction>{instructions[pos]};
+              }
+              
+              newInst.hasPoolData = false;
+              newInst.isLabel = false;
+              newInst.valueSize = 0;
+              newInst.data.four = 0;
+              result.push_back(newInst);
+              return result;
+          }
+      });
+      
+      // // Pattern 6: goto to next instruction -> remove
+      // patterns.push_back({
+      //     {OP_goto},
+      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+      //         if (instructions[pos].bc != OP_goto) return false;
+      //         // Check if goto targets next instruction
+      //         int32_t offset = (int32_t)instructions[pos].data.four;
+      //         return offset == short_opcode_info(OP_goto).size - 1;
+      //     },
+      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+      //         return std::vector<BCInstruction>(); // Remove useless goto
+      //     }
+      // });
+      
+      // // Pattern 7: Optimize get_loc + put_loc of same variable (common in simple assignments)
+      // patterns.push_back({
+      //     {OP_get_loc_check, OP_put_loc},
+      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+      //         if (pos + 1 >= instructions.size()) return false;
+      //         return instructions[pos].bc == OP_get_loc_check && 
+      //                instructions[pos + 1].bc == OP_put_loc &&
+      //                instructions[pos].data.two == instructions[pos + 1].data.two;
+      //     },
+      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+      //         // This is a no-op (reading and writing same local)
+      //         return std::vector<BCInstruction>(); 
+      //     }
+      // });
+      
+      // // Pattern 8: Optimize push_empty_string + get_field2 for concat
+      // patterns.push_back({
+      //     {OP_push_empty_string, OP_get_field2},
+      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+      //         if (pos + 1 >= instructions.size()) return false;
+      //         return instructions[pos].bc == OP_push_empty_string && 
+      //                instructions[pos + 1].bc == OP_get_field2;
+      //     },
+      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+      //         // Keep as is but mark for potential string builder optimization
+      //         return std::vector<BCInstruction>{instructions[pos], instructions[pos + 1]};
+      //     }
+      // });
+  }
+  
+  std::vector<BCInstruction> optimize(const std::vector<BCInstruction>& instructions) {
+      std::vector<BCInstruction> optimized;
+      
+      // Keep first dummy instruction
+      if (!instructions.empty()) {
+          optimized.push_back(instructions[0]);
+      }
+      
+      size_t i = 1;
+      while (i < instructions.size()) {
+          bool matched = false;
+          
+          // Try each pattern
+          for (const auto& pattern : patterns) {
+              if (pattern.matcher(instructions, i)) {
+                  auto replacement = pattern.replacer(instructions, i);
+                  optimized.insert(optimized.end(), replacement.begin(), replacement.end());
+                  i += pattern.pattern.size(); // Skip matched instructions
+                  matched = true;
+                  break;
+              }
+          }
+          
+          if (!matched) {
+              optimized.push_back(instructions[i]);
+              i++;
+          }
+      }
+      
+      return optimized;
+  }
+};
+
+// Modified generateBytecode function with optimizations
 JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 {
   IridiumSEXP *file = node;
   ensureTag(file, "File");
+  // ensureFlag(file, "JSModule");
 
   // Entry 1: Module Requests
   // Entry 2: Static Imports
@@ -2837,10 +3574,11 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   uint8_t moduleMetaEntries = 4;
   uint16_t numModules = node->numArgs - moduleMetaEntries;
 
-  // dumpIridiumSEXP(stdout, file, 0);
-
-  JSValue *moduleList = malloc(numModules * sizeof(JSValue));
+  JSValue *moduleList = (JSValue *)malloc(node->numArgs * sizeof(JSValue));
   int topLevelModuleIdx = -1;
+
+  // Initialize optimizer
+  PeepholeOptimizer peepholeOpt;
 
   for (int i = 0; i < numModules; ++i)
   {
@@ -2848,58 +3586,64 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     ensureTag(bbContainer, "BBContainer");
 
     bool isTopLevelModule = hasFlag(bbContainer, "TopLevel");
-
     if (isTopLevelModule)
     {
       topLevelModuleIdx = i;
     }
 
-    BCLList *bcTarget = malloc(sizeof(BCLList));
-    BCLList *startBC = bcTarget;
+    vector<BCInstruction> instructions;
 
-    bcTarget->next = NULL;
-    bcTarget->bc = 0;
-    bcTarget->hasPoolData = false;
-    bcTarget->poolData = JS_UNINITIALIZED;
-    bcTarget->data.four = 0;
-    bcTarget->valueSize = 0;
+    // Add dummy first instruction
+    BCInstruction inst;
+    inst.bc = 0;
+    inst.hasPoolData = false;
+    inst.poolData = JS_UNINITIALIZED;
+    inst.data.four = 0;
+    inst.valueSize = 0;
+    // inst.isLabel = false;
+    // inst.label = 0;
+    instructions.push_back(inst);
 
-    // BB list
+    // Generate initial bytecode
     IridiumSEXP *bbList = bbContainer->args[1];
-
-    // Module Body
     for (int idx = 0; idx < bbList->numArgs; idx++)
     {
       IridiumSEXP *bb = bbList->args[idx];
       ensureTag(bb, "BB");
-      bcTarget = pushLabel(ctx, bcTarget, getFlagNumber(bb, "IDX"));
+      pushLabel(ctx, instructions, getFlagNumber(bb, "IDX"));
       for (int stmtIDX = 0; stmtIDX < bb->numArgs; stmtIDX++)
       {
         IridiumSEXP *currStmt = bb->args[stmtIDX];
-        bcTarget = handleIriStmt(ctx, bcTarget, currStmt);
+        handleIriStmt(ctx, instructions, currStmt);
       }
     }
 
-    // Patch GOTOs
-    patchGotos(startBC->next, 0, startBC->next);
+    // Apply optimizations in sequence
+    patchGotos(instructions);
 
-    JSValue res = generateQjsFunction(ctx, bbContainer, startBC->next);
+    // Apply peephole optimizations
+    // instructions = peepholeOpt.optimize(instructions);
 
-    // // Dump generated bytecode
-    // dumpBCLList(ctx, startBC->next);
+    // Remove NOPs
+    instructions = removeNOPs(ctx, instructions);
+
+    // Generate the function with optimized instructions
+    JSValue res = generateQjsFunction(ctx, bbContainer, instructions);
 
     // Free BCLList
-    freeBCLList(ctx, startBC);
+    freeBCLList(ctx, instructions);
+
+    // js_dump_function_bytecode(ctx, (JSFunctionBytecode *)res.u.ptr);
 
     moduleList[i] = res;
   }
 
   assert(topLevelModuleIdx >= 0);
 
-  // Fill CPool with closures
+  // Fill CPool with closures (same as before)
   for (int i = 0; i < numModules; i++)
   {
-    IridiumSEXP *bbContainer = file->args[moduleMetaEntries + i];
+    IridiumSEXP *bbContainer = file->args[moduleMetaEntries+i];
     ensureTag(bbContainer, "BBContainer");
 
     IridiumSEXP *bindingsInfo = bbContainer->args[0];
@@ -2916,6 +3660,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     {
       IridiumSEXP *poolBinding = lambdasList->args[j];
       ensureTag(poolBinding, "PoolBinding");
+      
       // StartBBIDX of Closure that is needed
       int targetStartBBIDX = getFlagNumber(poolBinding, "StartBBIDX");
 
@@ -2924,7 +3669,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       bool found = false;
       for (int k = 0; k < numModules; k++)
       {
-        IridiumSEXP *bbContainer = file->args[moduleMetaEntries + k];
+        IridiumSEXP *bbContainer = file->args[moduleMetaEntries+k];
         ensureTag(bbContainer, "BBContainer");
         int closureStartBBIDX = getFlagNumber(bbContainer, "StartBBIDX");
         if (closureStartBBIDX == targetStartBBIDX)
@@ -2956,6 +3701,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       js_dump_function_bytecode(ctx, b);
     }
   }
+
   return moduleList[topLevelModuleIdx];
 }
 
@@ -3013,7 +3759,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 1. Create External Module Requests
     m->req_module_entries_count = moduleRequests->numArgs;
     m->req_module_entries_size = m->req_module_entries_count;
-    m->req_module_entries = js_mallocz(ctx, sizeof(m->req_module_entries[0]) * m->req_module_entries_size);
+    m->req_module_entries = (JSReqModuleEntry*)js_mallocz(ctx, sizeof(m->req_module_entries[0]) * m->req_module_entries_size);
 
     for (int r = 0; r < moduleRequests->numArgs; ++r)
     {
@@ -3028,7 +3774,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 2. Link Static Import Targets
     m->import_entries_count = staticImports->numArgs;
     m->import_entries_size = m->import_entries_count;
-    m->import_entries = js_mallocz(ctx, sizeof(m->import_entries[0]) * m->import_entries_size);
+    m->import_entries = (JSImportEntry*)js_mallocz(ctx, sizeof(m->import_entries[0]) * m->import_entries_size);
 
     for (int im = 0; im < staticImports->numArgs; ++im)
     {
@@ -3065,7 +3811,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 3. Link Exports
     m->export_entries_count = staticExports->numArgs;
     m->export_entries_size = m->export_entries_count;
-    m->export_entries = js_mallocz(ctx, sizeof(m->export_entries[0]) * m->export_entries_size);
+    m->export_entries = (JSExportEntry*)js_mallocz(ctx, sizeof(m->export_entries[0]) * m->export_entries_size);
 
     for (int ex = 0; ex < staticExports->numArgs; ++ex)
     {
@@ -3100,7 +3846,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 4. Star Exports
     m->star_export_entries_count = starExports->numArgs;
     m->star_export_entries_size = m->star_export_entries_count;
-    m->star_export_entries = js_mallocz(ctx, sizeof(m->star_export_entries[0]) * m->star_export_entries_size);
+    m->star_export_entries = (JSStarExportEntry*)js_mallocz(ctx, sizeof(m->star_export_entries[0]) * m->star_export_entries_size);
 
     for (int ex = 0; ex < starExports->numArgs; ++ex)
     {
@@ -3135,7 +3881,7 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   IridiumLoadResult iriRes = compile_iri_module(ctx, json);
   if (iriRes.isModule)
   {
-    JSValue moduleVal = JS_NewModuleValue(ctx, iriRes.ptr);
+    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef*)iriRes.ptr);
 
     JS_ResolveModule(ctx, moduleVal);
     JSValue res = JS_EvalFunction(ctx, moduleVal);
@@ -3188,7 +3934,7 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
 
   if (iriRes.isModule)
   {
-    JSValue moduleVal = JS_NewModuleValue(ctx, iriRes.ptr);
+    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef*)iriRes.ptr);
 
     JS_ResolveModule(ctx, moduleVal);
     JSValue res = JS_EvalFunction(ctx, moduleVal);
@@ -3224,203 +3970,3 @@ bool isBitSet(int bitIndex, int value)
 {
   return (value & (1 << bitIndex)) != 0;
 }
-
-//
-// Write verifier later...
-//
-
-// bool isFlagName(IridiumFlag *flag, const char *const name)
-// {
-//     return strcmp(flag->name, name) == 0;
-// }
-
-// IridiumSEXP *handleFileSEXP(cJSON *args, cJSON *flags)
-// {
-//     // Parsing
-//     IridiumSEXP *node = parseNode("File", args, flags);
-
-//     // Post-Assertions
-//     IridiumFlag **temp = node->flags;
-//     IridiumFlag *currFlag = NULL;
-//     int it = 0;
-//     bool hasJSScript = false;
-//     bool hasJSModule = false;
-//     while (true)
-//     {
-//         currFlag = temp[it++];
-//         if (currFlag == NULL)
-//             break;
-//         if (isFlagName(currFlag, "JSScript")) hasJSScript = true;
-//         if (isFlagName(currFlag, "JSModule")) hasJSModule = true;
-//     }
-
-//     if (it <= 1)
-//     {
-//         fprintf(stderr, "Expected at most on flag for a File, found %d\n", it);
-//         exit(1);
-//     }
-
-//     if (hasJSScript && hasJSModule) {
-//         fprintf(stderr, "Expected either of JSScript or JSModule");
-//         exit(1);
-//     }
-
-//     if (!(hasJSScript && hasJSModule)) {
-//         fprintf(stderr, "Found invalid flag, expected either of JSScript of JSModule");
-//         exit(1);
-//     }
-
-//     return node;
-// }
-
-// IridiumSEXP *handleBB(cJSON *args, cJSON *flags)
-// {
-//     // Parsing
-//     IridiumSEXP *node = parseNode("File", args, flags);
-
-//     // Post-Assertions
-//     IridiumFlag **temp = node->flags;
-//     IridiumFlag *currFlag = NULL;
-//     int it = 0;
-//     while (true)
-//     {
-//         currFlag = temp[it++];
-//         if (currFlag == NULL)
-//             break;
-
-//         if (!(isFlagName(currFlag, "JSScript") || isFlagName(currFlag, "JSModule")))
-//         {
-//             fprintf(stderr, "Invalid Flag %s for file\n", currFlag->name);
-//             exit(1);
-//         }
-//     }
-
-//     if (it <= 1)
-//     {
-//         fprintf(stderr, "Expected at most on flag for a File, found %d\n", it);
-//         exit(1);
-//     }
-
-//     return node;
-// }
-
-// IridiumSEXP *handleEnvDeclare(cJSON *args, cJSON *flags)
-// {
-//     // Parsing
-//     IridiumSEXP *node = parseNode("File", args, flags);
-
-//     // Post-Assertions
-//     IridiumFlag **temp = node->flags;
-//     IridiumFlag *currFlag = NULL;
-//     int it = 0;
-//     while (true)
-//     {
-//         currFlag = temp[it++];
-//         if (currFlag == NULL)
-//             break;
-
-//         if (!(isFlagName(currFlag, "JSScript") || isFlagName(currFlag, "JSModule")))
-//         {
-//             fprintf(stderr, "Invalid Flag %s for file\n", currFlag->name);
-//             exit(1);
-//         }
-//     }
-
-//     if (it <= 1)
-//     {
-//         fprintf(stderr, "Expected at most on flag for a File, found %d\n", it);
-//         exit(1);
-//     }
-
-//     return node;
-// }
-
-// void hello_world_test(JSContext *ctx)
-// {
-//   JSRuntime *rt = ctx->rt;
-//   JSAtom atom_console = JS_NewAtom(ctx, "console");
-//   JSAtom atom_log = JS_NewAtom(ctx, "log");
-//   JSAtom atom_hello_world = JS_NewAtom(ctx, "Hello World");
-//   uint16_t callMethodStackSize = 1;
-
-//   uint8_t bytecode[] = {
-//       OP_push_this,
-//       OP_if_false8,
-//       2,
-//       OP_return_undef,
-//       OP_get_var,
-//       0, 0, 0, 0, // 32 bytes for console atom 'console'
-//       OP_get_field2,
-//       0, 0, 0, 0, // 32 bytes for console atom 'log'
-//       OP_push_atom_value,
-//       0, 0, 0, 0, // 32 bytes for console atom 'Hello World'
-//       OP_call_method,
-//       0, 0,
-//       OP_drop,
-//       OP_undefined,
-//       OP_return_async};
-
-//   memcpy(bytecode + 5, &atom_console, 4 * sizeof(uint8_t));
-//   memcpy(bytecode + 10, &atom_log, 4 * sizeof(uint8_t));
-//   memcpy(bytecode + 15, &atom_hello_world, 4 * sizeof(uint8_t));
-//   memcpy(bytecode + 20, &callMethodStackSize, 2 * sizeof(uint8_t));
-
-//   int function_size = sizeof(JSFunctionBytecode);
-//   int cpool_count = 0;
-//   int var_count = 0;
-//   int byte_code_len = sizeof(bytecode);
-
-//   int cpool_offset = function_size;
-//   function_size += sizeof(JSValue) * cpool_count;
-
-//   int vardefs_offset = function_size;
-//   function_size += sizeof(JSVarDef) * var_count;
-
-//   int bytecode_offset = function_size;
-//   function_size += byte_code_len;
-
-//   JSFunctionBytecode *b = js_mallocz(ctx, function_size);
-//   if (!b)
-//     return;
-
-//   b->header.ref_count = 1;
-//   b->header.gc_obj_type = JS_GC_OBJ_TYPE_FUNCTION_BYTECODE;
-
-//   b->cpool = (JSValue *)((uint8_t *)b + cpool_offset);
-//   b->vardefs = (JSVarDef *)((uint8_t *)b + vardefs_offset);
-//   b->byte_code_buf = (uint8_t *)b + bytecode_offset;
-
-//   b->cpool_count = cpool_count;
-//   b->var_count = var_count;
-//   b->arg_count = 0;
-//   b->defined_arg_count = 0;
-//   b->stack_size = 8;
-//   b->closure_var_count = 0;
-//   b->byte_code_len = byte_code_len;
-//   b->func_name = JS_ATOM_NULL;
-//   b->has_prototype = 1;
-//   b->has_simple_parameter_list = 1;
-//   b->is_strict_mode = 1;
-//   b->func_kind = JS_FUNC_NORMAL;
-//   b->realm = JS_DupContext(ctx);
-
-//   /* Copy bytecode */
-//   memcpy(b->byte_code_buf, bytecode, byte_code_len);
-
-//   /* Insert into GC */
-//   add_gc_object(rt, &b->header, JS_GC_OBJ_TYPE_FUNCTION_BYTECODE);
-
-//   // Evaluate
-//   JSValue fun_obj = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, b);
-//   JSModuleDef *m = js_new_module_def(ctx, JS_NewAtom(ctx, "<unnamed>"));
-//   m->func_obj = fun_obj;
-
-//   JSValue module_obj = JS_NewModuleValue(ctx, m);
-
-//   JSValue retVal = JS_EvalFunction(ctx, module_obj);
-
-//   JS_FreeValue(ctx, retVal);
-//   JS_FreeValue(ctx, fun_obj);
-
-//   return;
-// }
