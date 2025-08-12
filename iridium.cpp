@@ -689,6 +689,12 @@ void keepNDropM(JSContext *ctx, vector<BCInstruction> &instructions, int N, int 
     pushOP(ctx, instructions, OP_nip1);
     return;
   }
+  else if (N == 1 && M == 2)
+  {
+    pushOP(ctx, instructions, OP_nip);
+    pushOP(ctx, instructions, OP_nip);
+    return;
+  }
   fprintf(stderr, "TODO: keepMDropN, handle general case, validate code!!");
   exit(1);
 
@@ -1550,11 +1556,31 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   else if (isTag(rval, "JSForInNext"))
   {
     lowerToStack(ctx, instructions, rval->args[0]);
-    pushOP(ctx, instructions, OP_for_in_next);
+    return pushOP(ctx, instructions, OP_for_in_next);
+  }
+  else if (isTag(rval, "JSCopyDataProperties")) // new RVal
+  {
+    // exc_obj
+    IridiumSEXP *exc_obj = rval->args[0];
+    lowerToStack(ctx, instructions, exc_obj);
 
-    keepNDropM(ctx, instructions, 2, 1);
+    // source
+    IridiumSEXP *source = rval->args[1];
+    lowerToStack(ctx, instructions, source);
 
-    return;
+    // target
+    IridiumSEXP *target = rval->args[2];
+    lowerToStack(ctx, instructions, target);
+
+    // OP_copy_data_properties
+    return pushOP16(ctx, instructions, OP_copy_data_properties, 68);
+  }
+  else if (isTag(rval, "JSAppend"))
+  {
+    lowerToStack(ctx, instructions, rval->args[0]); // tmp
+    lowerToStack(ctx, instructions, rval->args[1]); // insertionIdx
+    lowerToStack(ctx, instructions, rval->args[2]); // spreadVal
+    return pushOP(ctx, instructions, OP_append);
   }
   else if (isTag(rval, "JSForOfStart"))
   {
@@ -1734,6 +1760,9 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
         lowerToStack(ctx, instructions, currStmt->args[i]);
       }
     }
+    int nVal = getFlagNumber(currStmt, "NVAL");
+    int nip = getFlagNumber(currStmt, "NIP");
+    keepNDropM(ctx, instructions, nVal, nip);
     return;
   }
   else if (isTag(currStmt, "StackReject"))
@@ -2024,33 +2053,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   //   uint8_t op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
   //   return push8(ctx, instructions, op_flag);
   // }
-  else if (isTag(currStmt, "JSCopyDataProperties"))
-  {
-    // exc_obj
-    IridiumSEXP *exc_obj = currStmt->args[0];
-    lowerToStack(ctx, instructions, exc_obj);
-
-    // source
-    IridiumSEXP *source = currStmt->args[1];
-    lowerToStack(ctx, instructions, source);
-
-    // target
-    IridiumSEXP *target = currStmt->args[2];
-    lowerToStack(ctx, instructions, target);
-
-    // OP_copy_data_properties
-    pushOP16(ctx, instructions, OP_copy_data_properties, 68);
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    IridiumSEXP *loc = currStmt->args[3];
-    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
-
-    pushOP(ctx, instructions, OP_drop);
-    return pushOP(ctx, instructions, OP_drop);
-  }
   // else if (isTag(currStmt, "JSIteratorClose"))
   // {
   //   return pushOP(ctx, instructions, OP_iterator_close);
@@ -2146,27 +2148,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
     {
       fprintf(stderr, "TODO: unhandled JSFuncDecl case, expected a GlobalBinding\n");
       exit(1);
-    }
-  }
-  else if (isTag(currStmt, "JSAppend"))
-  {
-    lowerToStack(ctx, instructions, currStmt->args[0]); // tmp
-    lowerToStack(ctx, instructions, currStmt->args[1]); // insertionIdx
-    lowerToStack(ctx, instructions, currStmt->args[2]); // spreadVal
-    pushOP(ctx, instructions, OP_append);
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    { // InsertionIdxLoc
-      IridiumSEXP *insertionLoc = currStmt->args[3];
-      storeWhatevesOnTheStack(ctx, insertionLoc, instructions, safe, thisInit, isStrict, false);
-    }
-
-    { // tempLoc
-      IridiumSEXP *tmpLoc = currStmt->args[4];
-      storeWhatevesOnTheStack(ctx, tmpLoc, instructions, safe, thisInit, isStrict, false);
     }
   }
   else if (isTag(currStmt, "JSDefineObjProp"))
