@@ -1599,6 +1599,67 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   {
     return pushOP(ctx, instructions, OP_iterator_close);
   }
+  else if (isTag(rval, "JSDefineObjProp"))
+  {
+    IridiumSEXP *obj = rval->args[0];
+    lowerToStack(ctx, instructions, obj);
+    IridiumSEXP *field = rval->args[1];
+    IridiumSEXP *val = rval->args[2];
+
+    if (isTag(field, "String"))
+    {
+      lowerToStack(ctx, instructions, val);
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+      pushOP32(ctx, instructions, OP_define_field, fieldAtom);
+    }
+    else
+    {
+      lowerToStack(ctx, instructions, field);
+      lowerToStack(ctx, instructions, val);
+      pushOP(ctx, instructions, OP_define_array_el);
+      pushOP(ctx, instructions, OP_drop);
+    }
+    return;
+  }
+  else if (isTag(rval, "JSDefineObjMethod"))
+  {
+    uint8_t op_flag;
+    if (hasFlag(rval, "METHOD"))
+    {
+      op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
+    }
+    else if (hasFlag(rval, "GET"))
+    {
+      op_flag = OP_DEFINE_METHOD_GETTER | OP_DEFINE_METHOD_ENUMERABLE;
+    }
+    else if (hasFlag(rval, "SET"))
+    {
+      op_flag = OP_DEFINE_METHOD_SETTER | OP_DEFINE_METHOD_ENUMERABLE;
+    }
+    else
+    {
+      fprintf(stderr, "TODO: JSDefineObjMethod invalid flag\n");
+      exit(1);
+    }
+
+    IridiumSEXP *obj = rval->args[0];
+    lowerToStack(ctx, instructions, obj);
+    IridiumSEXP *field = rval->args[1];
+    IridiumSEXP *val = rval->args[2];
+
+    if (isTag(field, "String"))
+    {
+      lowerToStack(ctx, instructions, val);
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+      pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
+    }
+    else
+    {
+      lowerToStack(ctx, instructions, field);
+      lowerToStack(ctx, instructions, val);
+      pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
+    }
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled RVal: %s\n", rval->tag);
@@ -2148,84 +2209,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
     {
       fprintf(stderr, "TODO: unhandled JSFuncDecl case, expected a GlobalBinding\n");
       exit(1);
-    }
-  }
-  else if (isTag(currStmt, "JSDefineObjProp"))
-  {
-    IridiumSEXP *obj = currStmt->args[0];
-    lowerToStack(ctx, instructions, obj);
-    IridiumSEXP *field = currStmt->args[1];
-    IridiumSEXP *val = currStmt->args[2];
-
-    if (isTag(field, "String"))
-    {
-      lowerToStack(ctx, instructions, val);
-      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-      pushOP32(ctx, instructions, OP_define_field, fieldAtom);
-    }
-    else
-    {
-      lowerToStack(ctx, instructions, field);
-      lowerToStack(ctx, instructions, val);
-      pushOP(ctx, instructions, OP_define_array_el);
-      pushOP(ctx, instructions, OP_drop);
-    }
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    { // tempLoc
-      IridiumSEXP *loc = currStmt->args[3];
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
-    }
-  }
-  else if (isTag(currStmt, "JSDefineObjMethod"))
-  {
-    uint8_t op_flag;
-    if (hasFlag(currStmt, "METHOD"))
-    {
-      op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
-    }
-    else if (hasFlag(currStmt, "GET"))
-    {
-      op_flag = OP_DEFINE_METHOD_GETTER | OP_DEFINE_METHOD_ENUMERABLE;
-    }
-    else if (hasFlag(currStmt, "SET"))
-    {
-      op_flag = OP_DEFINE_METHOD_SETTER | OP_DEFINE_METHOD_ENUMERABLE;
-    }
-    else
-    {
-      fprintf(stderr, "TODO: JSDefineObjMethod invalid flag\n");
-      exit(1);
-    }
-
-    IridiumSEXP *obj = currStmt->args[0];
-    lowerToStack(ctx, instructions, obj);
-    IridiumSEXP *field = currStmt->args[1];
-    IridiumSEXP *val = currStmt->args[2];
-
-    if (isTag(field, "String"))
-    {
-      lowerToStack(ctx, instructions, val);
-      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-      pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
-    }
-    else
-    {
-      lowerToStack(ctx, instructions, field);
-      lowerToStack(ctx, instructions, val);
-      pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
-    }
-
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-
-    { // tempLoc
-      IridiumSEXP *loc = currStmt->args[3];
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
     }
   }
   else
