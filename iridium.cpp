@@ -923,37 +923,37 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       return pushOP(ctx, instructions, OP_push_false);
     }
   }
-  else if (isTag(rval, "Unop"))
+  else if (isTag(rval, "Unop") || isTag(rval, "JSUnop"))
   {
-    char *op = getFlagString(rval->args[0], "IridiumPrimitive");
+    char *op = getFlagString(rval, "OP");
     if (strcmp(op, "!") == 0)
     {
-      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[0]);
       return pushOP(ctx, instructions, OP_lnot);
     }
     else if (strcmp(op, "-") == 0)
     {
-      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[0]);
       return pushOP(ctx, instructions, OP_neg);
     }
     else if (strcmp(op, "+") == 0)
     {
-      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[0]);
       return pushOP(ctx, instructions, OP_plus);
     }
     else if (strcmp(op, "~") == 0)
     {
-      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[0]);
       return pushOP(ctx, instructions, OP_not);
     }
     else if (strcmp(op, "typeof") == 0)
     {
-      lowerToStack(ctx, instructions, rval->args[1]);
+      lowerToStack(ctx, instructions, rval->args[0]);
       return pushOP(ctx, instructions, OP_typeof);
     }
     else if (strcmp(op, "delete") == 0)
     {
-      IridiumSEXP *valToDelete = rval->args[1];
+      IridiumSEXP *valToDelete = rval->args[0];
       assert(isTag(valToDelete, "List"));
       if (hasFlag(valToDelete, "UNOP_DEL_MEMBEREXPR"))
       {
@@ -982,145 +982,145 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       exit(1);
     }
   }
-  else if (isTag(rval, "Binop"))
+  else if (isTag(rval, "Binop") || isTag(rval, "JSBinop"))
   {
-    char *op = getFlagString(rval->args[0], "IridiumPrimitive");
+    char *op = getFlagString(rval, "OP");
     if (strcmp(op, "+") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_add);
     }
     else if (strcmp(op, "-") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_sub);
     }
     else if (strcmp(op, "/") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_div);
     }
     else if (strcmp(op, "%") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_mod);
     }
     else if (strcmp(op, "*") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_mul);
     }
     else if (strcmp(op, "**") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_pow);
     }
     else if (strcmp(op, "&") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_and);
     }
     else if (strcmp(op, "|") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_or);
     }
     else if (strcmp(op, ">>") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_sar);
     }
     else if (strcmp(op, ">>>") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_shr);
     }
     else if (strcmp(op, "<<") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_shl);
     }
     else if (strcmp(op, "^") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_xor);
     }
     else if (strcmp(op, "==") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_eq);
     }
     else if (strcmp(op, "===") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_strict_eq);
     }
     else if (strcmp(op, "!=") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_neq);
     }
     else if (strcmp(op, "!==") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_strict_neq);
     }
     else if (strcmp(op, "pin") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_private_in);
     }
     else if (strcmp(op, "in") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_in);
     }
     else if (strcmp(op, "instanceof") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_instanceof);
     }
     else if (strcmp(op, ">") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_gt);
     }
     else if (strcmp(op, "<") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_lt);
     }
     else if (strcmp(op, ">=") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_gte);
     }
     else if (strcmp(op, "<=") == 0)
     {
+      lowerToStack(ctx, instructions, rval->args[0]);
       lowerToStack(ctx, instructions, rval->args[1]);
-      lowerToStack(ctx, instructions, rval->args[2]);
       return pushOP(ctx, instructions, OP_lte);
     }
     else
