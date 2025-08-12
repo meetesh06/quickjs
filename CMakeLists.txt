@@ -302,7 +302,7 @@ add_executable(qjs_old_exe
     gen/repl.c
     gen/standalone.c
     qjs.c
-    iridium.c  # Explicitly use iridium3.cpp
+    iridium.c
 )
 
 add_qjs_libc_if_needed(qjs_old_exe)
@@ -321,7 +321,7 @@ add_executable(qjs_new_exe
     gen/repl.c
     gen/standalone.c
     qjs.c
-    iridium4.cpp  # Explicitly use iridium4.cpp
+    iridium.cpp
 )
 
 set(qjs_sources
@@ -330,7 +330,7 @@ set(qjs_sources
     libunicode.c
     quickjs.c
     xsum.c
-    iridium3.cpp
+    iridium.cpp
     cJSON.c
 )
 

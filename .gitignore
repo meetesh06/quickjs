@@ -12,4 +12,10 @@ CMakeUserPresets.json
 fuzz
 .vscode/
 microbench*.txt
+iridium.c 
+iridium2.cpp
+iridium3.cpp
+iridium5.cpp
+iridium_vec.cpp
+optimise.cpp 
 temp
