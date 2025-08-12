@@ -298,23 +298,23 @@ target_link_libraries(qjsc qjs)
 #
 
 # QuickJS CLI - old version (iridium3.cpp)
-add_executable(qjs_old_exe
-    gen/repl.c
-    gen/standalone.c
-    qjs.c
-    iridium.c
-)
+# add_executable(qjs_old_exe
+#     gen/repl.c
+#     gen/standalone.c
+#     qjs.c
+#     iridium.c
+# )
 
-add_qjs_libc_if_needed(qjs_old_exe)
-add_static_if_needed(qjs_old_exe)
-set_target_properties(qjs_old_exe PROPERTIES
-    OUTPUT_NAME "qjs_old"
-)
-target_compile_definitions(qjs_old_exe PRIVATE ${qjs_defines})
-target_link_libraries(qjs_old_exe qjs)
-if(NOT WIN32)
-    set_target_properties(qjs_old_exe PROPERTIES ENABLE_EXPORTS TRUE)
-endif()
+# add_qjs_libc_if_needed(qjs_old_exe)
+# add_static_if_needed(qjs_old_exe)
+# set_target_properties(qjs_old_exe PROPERTIES
+#     OUTPUT_NAME "qjs_old"
+# )
+# target_compile_definitions(qjs_old_exe PRIVATE ${qjs_defines})
+# target_link_libraries(qjs_old_exe qjs)
+# if(NOT WIN32)
+#     set_target_properties(qjs_old_exe PROPERTIES ENABLE_EXPORTS TRUE)
+# endif()
 
 # QuickJS CLI - new version (iridium4.cpp)
 add_executable(qjs_new_exe
@@ -350,16 +350,16 @@ if(QJS_BUILD_CLI_WITH_MIMALLOC OR QJS_BUILD_CLI_WITH_STATIC_MIMALLOC)
     find_package(mimalloc REQUIRED)
     # Upstream mimalloc doesn't provide a way to know if both libraries are supported.
     if(QJS_BUILD_CLI_WITH_STATIC_MIMALLOC)
-        if(TARGET qjs_old_exe)
-            target_link_libraries(qjs_old_exe mimalloc-static)
-        endif()
+        # if(TARGET qjs_old_exe)
+        #     target_link_libraries(qjs_old_exe mimalloc-static)
+        # endif()
         if(TARGET qjs_new_exe)
             target_link_libraries(qjs_new_exe mimalloc-static)
         endif()
     else()
-        if(TARGET qjs_old_exe)
-            target_link_libraries(qjs_old_exe mimalloc)
-        endif()
+        # if(TARGET qjs_old_exe)
+        #     target_link_libraries(qjs_old_exe mimalloc)
+        # endif()
         if(TARGET qjs_new_exe)
             target_link_libraries(qjs_new_exe mimalloc)
         endif()
@@ -368,7 +368,7 @@ endif()
 
 
 # Add an option to select which version to build
-option(BUILD_QJS_OLD "Build the old version (qjs_old)" OFF)
+# option(BUILD_QJS_OLD "Build the old version (qjs_old)" OFF)
 option(BUILD_QJS_NEW "Build the new version (qjs_new)" ON)
 
 
@@ -483,7 +483,7 @@ if(NOT IOS)
         install(FILES quickjs-libc.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     endif()
     # install(TARGETS qjs_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(TARGETS qjs_old_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    # install(TARGETS qjs_old_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(TARGETS qjs_new_exe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     install(TARGETS qjsc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
