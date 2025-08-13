@@ -994,8 +994,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     else if (strcmp(op, "delete") == 0)
     {
       IridiumSEXP *valToDelete = rval->args[0];
-      assert(isTag(valToDelete, "List"));
-      if (hasFlag(valToDelete, "UNOP_DEL_MEMBEREXPR"))
+      if (isTag(valToDelete, "UNOPDelMemberExpr"))
       {
         IridiumSEXP *receiver = valToDelete->args[0];
         IridiumSEXP *field = valToDelete->args[1];
@@ -1003,7 +1002,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
         lowerToStack(ctx, instructions, field);
         return pushOP(ctx, instructions, OP_delete);
       }
-      else if (hasFlag(valToDelete, "UNOP_DEL_VAR"))
+      else if (isTag(valToDelete, "UNOPDelVar"))
       {
         IridiumSEXP *var = valToDelete->args[0];
         assert(isTag(var, "String"));
@@ -1012,7 +1011,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       }
       else
       {
-        fprintf(stderr, "TODO: Unhandled : %s\n", op);
+        fprintf(stderr, "TODO: Unhandled : %s, %s, %s\n", op, rval->tag, valToDelete->tag);
         exit(1);
       }
     }
