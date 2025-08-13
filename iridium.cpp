@@ -870,8 +870,8 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     {
       assert(rval->numArgs >= 2);
       lowerToStack(ctx, instructions, rval->args[0]);
+      pushOP(ctx, instructions, OP_dup);
       lowerToStack(ctx, instructions, rval->args[1]);
-      pushOP(ctx, instructions, OP_check_brand); // Ensure the function's home object's brand matches the brand of the current instance.
       i = 2;
     }
 
@@ -906,6 +906,46 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   else if (isTag(rval, "EnvRead"))
   {
     return lowerToStack(ctx, instructions, rval->args[0]);
+  }
+  else if (isTag(rval, "PVTEnvRead"))
+  {
+    // This insturuction expects that the "this" context was passed by the parent...
+    lowerToStack(ctx, instructions, rval->args[0]);
+    if (!hasFlag(rval, "FULLY_RESOLVE"))
+      return;
+    bool isMethod = hasFlag(rval, "METHOD");
+    if (isMethod)
+    {
+      pushOP(ctx, instructions, OP_check_brand);
+      pushOP(ctx, instructions, OP_nip);
+    }
+    else
+    {
+      pushOP(ctx, instructions, OP_get_private_field);
+    }
+    return;
+  }
+  else if (isTag(rval, "JSPrivateFieldWrite"))
+  {
+    bool isDeclaration = hasFlag(rval, "DECL");
+    if (isDeclaration)
+    {
+      lowerToStack(ctx, instructions, rval->args[0]);     // obj
+      lowerToStack(ctx, instructions, rval->args[1]);     // obj prop
+      lowerToStack(ctx, instructions, rval->args[2]);     // obj prop value
+      pushOP(ctx, instructions, OP_insert3);              // value obj prop value
+      pushOP(ctx, instructions, OP_define_private_field); // value obj
+      pushOP(ctx, instructions, OP_drop);                 // value
+    }
+    else
+    {
+      lowerToStack(ctx, instructions, rval->args[0]);  // obj
+      lowerToStack(ctx, instructions, rval->args[2]);  // obj value
+      pushOP(ctx, instructions, OP_insert2);           // value obj value
+      lowerToStack(ctx, instructions, rval->args[1]);  // value obj value prop
+      pushOP(ctx, instructions, OP_put_private_field); // value
+    }
+    return;
   }
   else if (isTag(rval, "EnvWrite"))
   {
@@ -1433,7 +1473,8 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   {
     lowerToStack(ctx, instructions, rval->args[0]);
     lowerToStack(ctx, instructions, rval->args[1]);
-    return pushOP(ctx, instructions, OP_get_private_field);
+    // return pushOP(ctx, instructions, OP_get_private_field);
+    return;
   }
   else if (isTag(rval, "JSSuperFieldRead"))
   {
@@ -1858,7 +1899,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   // {
   //   return pushOP(ctx, instructions, OP_check_ctor);
   // }
-  
+
   // else if (isTag(currStmt, "PushForOfCatchContext"))
   // {
   //   return lowerToStack(ctx, instructions, currStmt->args[0]);
@@ -2087,13 +2128,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   //     fprintf(stderr, "TODO: Expected a EnvBinding or RemoteEnvBinding!!");
   //   }
   // }
-  else if (isTag(currStmt, "JSPrivateFieldWrite"))
-  {
-    lowerToStack(ctx, instructions, currStmt->args[0]);
-    lowerToStack(ctx, instructions, currStmt->args[1]);
-    lowerToStack(ctx, instructions, currStmt->args[2]);
-    return pushOP(ctx, instructions, OP_define_private_field);
-  }
   else if (isTag(currStmt, "JSInitialYield"))
   {
     return pushOP(ctx, instructions, OP_initial_yield);
@@ -3390,136 +3424,164 @@ void patchGotosAfterNOPRemoval(std::vector<BCInstruction> &instructions)
 #include <unordered_map>
 #include <functional>
 
-struct PeepholePattern {
+struct PeepholePattern
+{
   std::vector<OPCodeEnum> pattern;
-  std::function<bool(const std::vector<BCInstruction>&, size_t)> matcher;
-  std::function<std::vector<BCInstruction>(const std::vector<BCInstruction>&, size_t)> replacer;
+  std::function<bool(const std::vector<BCInstruction> &, size_t)> matcher;
+  std::function<std::vector<BCInstruction>(const std::vector<BCInstruction> &, size_t)> replacer;
 };
 
-class PeepholeOptimizer {
+class PeepholeOptimizer
+{
 private:
   std::vector<PeepholePattern> patterns;
-  
+
 public:
-  PeepholeOptimizer() {
-      initializePatterns();
+  PeepholeOptimizer()
+  {
+    initializePatterns();
   }
-  
-  void initializePatterns() {
-      // Pattern 5: Optimize small integer constants
-      patterns.push_back({
-          {OP_push_const},
-          [](const std::vector<BCInstruction>& instructions, size_t pos) {
-              if (!instructions[pos].hasPoolData) return false;
-              // Check if the constant is a small integer
-              JSValue val = instructions[pos].poolData;
-              if (JS_VALUE_GET_TAG(val) == JS_TAG_INT) {
-                  int32_t n = JS_VALUE_GET_INT(val);
-                  return n >= -1 && n <= 5;
-              }
-              return false;
-          },
-          [](const std::vector<BCInstruction>& instructions, size_t pos) {
-              std::vector<BCInstruction> result;
-              BCInstruction newInst;
-              JSValue val = instructions[pos].poolData;
-              int32_t n = JS_VALUE_GET_INT(val);
-              
-              // Use specialized push instructions for small integers
-              switch(n) {
-                  case -1: newInst.bc = OP_push_minus1; break;
-                  case 0: newInst.bc = OP_push_0; break;
-                  case 1: newInst.bc = OP_push_1; break;
-                  case 2: newInst.bc = OP_push_2; break;
-                  case 3: newInst.bc = OP_push_3; break;
-                  case 4: newInst.bc = OP_push_4; break;
-                  case 5: newInst.bc = OP_push_5; break;
-                  default: return std::vector<BCInstruction>{instructions[pos]};
-              }
-              
-              newInst.hasPoolData = false;
-              newInst.isLabel = false;
-              newInst.valueSize = 0;
-              newInst.data.four = 0;
-              result.push_back(newInst);
-              return result;
-          }
-      });
-      
-      // // Pattern 6: goto to next instruction -> remove
-      // patterns.push_back({
-      //     {OP_goto},
-      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
-      //         if (instructions[pos].bc != OP_goto) return false;
-      //         // Check if goto targets next instruction
-      //         int32_t offset = (int32_t)instructions[pos].data.four;
-      //         return offset == short_opcode_info(OP_goto).size - 1;
-      //     },
-      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
-      //         return std::vector<BCInstruction>(); // Remove useless goto
-      //     }
-      // });
-      
-      // // Pattern 7: Optimize get_loc + put_loc of same variable (common in simple assignments)
-      // patterns.push_back({
-      //     {OP_get_loc_check, OP_put_loc},
-      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
-      //         if (pos + 1 >= instructions.size()) return false;
-      //         return instructions[pos].bc == OP_get_loc_check && 
-      //                instructions[pos + 1].bc == OP_put_loc &&
-      //                instructions[pos].data.two == instructions[pos + 1].data.two;
-      //     },
-      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
-      //         // This is a no-op (reading and writing same local)
-      //         return std::vector<BCInstruction>(); 
-      //     }
-      // });
-      
-      // // Pattern 8: Optimize push_empty_string + get_field2 for concat
-      // patterns.push_back({
-      //     {OP_push_empty_string, OP_get_field2},
-      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
-      //         if (pos + 1 >= instructions.size()) return false;
-      //         return instructions[pos].bc == OP_push_empty_string && 
-      //                instructions[pos + 1].bc == OP_get_field2;
-      //     },
-      //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
-      //         // Keep as is but mark for potential string builder optimization
-      //         return std::vector<BCInstruction>{instructions[pos], instructions[pos + 1]};
-      //     }
-      // });
+
+  void initializePatterns()
+  {
+    // Pattern 5: Optimize small integer constants
+    patterns.push_back({{OP_push_const},
+                        [](const std::vector<BCInstruction> &instructions, size_t pos)
+                        {
+                          if (!instructions[pos].hasPoolData)
+                            return false;
+                          // Check if the constant is a small integer
+                          JSValue val = instructions[pos].poolData;
+                          if (JS_VALUE_GET_TAG(val) == JS_TAG_INT)
+                          {
+                            int32_t n = JS_VALUE_GET_INT(val);
+                            return n >= -1 && n <= 5;
+                          }
+                          return false;
+                        },
+                        [](const std::vector<BCInstruction> &instructions, size_t pos)
+                        {
+                          std::vector<BCInstruction> result;
+                          BCInstruction newInst;
+                          JSValue val = instructions[pos].poolData;
+                          int32_t n = JS_VALUE_GET_INT(val);
+
+                          // Use specialized push instructions for small integers
+                          switch (n)
+                          {
+                          case -1:
+                            newInst.bc = OP_push_minus1;
+                            break;
+                          case 0:
+                            newInst.bc = OP_push_0;
+                            break;
+                          case 1:
+                            newInst.bc = OP_push_1;
+                            break;
+                          case 2:
+                            newInst.bc = OP_push_2;
+                            break;
+                          case 3:
+                            newInst.bc = OP_push_3;
+                            break;
+                          case 4:
+                            newInst.bc = OP_push_4;
+                            break;
+                          case 5:
+                            newInst.bc = OP_push_5;
+                            break;
+                          default:
+                            return std::vector<BCInstruction>{instructions[pos]};
+                          }
+
+                          newInst.hasPoolData = false;
+                          newInst.isLabel = false;
+                          newInst.valueSize = 0;
+                          newInst.data.four = 0;
+                          result.push_back(newInst);
+                          return result;
+                        }});
+
+    // // Pattern 6: goto to next instruction -> remove
+    // patterns.push_back({
+    //     {OP_goto},
+    //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+    //         if (instructions[pos].bc != OP_goto) return false;
+    //         // Check if goto targets next instruction
+    //         int32_t offset = (int32_t)instructions[pos].data.four;
+    //         return offset == short_opcode_info(OP_goto).size - 1;
+    //     },
+    //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+    //         return std::vector<BCInstruction>(); // Remove useless goto
+    //     }
+    // });
+
+    // // Pattern 7: Optimize get_loc + put_loc of same variable (common in simple assignments)
+    // patterns.push_back({
+    //     {OP_get_loc_check, OP_put_loc},
+    //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+    //         if (pos + 1 >= instructions.size()) return false;
+    //         return instructions[pos].bc == OP_get_loc_check &&
+    //                instructions[pos + 1].bc == OP_put_loc &&
+    //                instructions[pos].data.two == instructions[pos + 1].data.two;
+    //     },
+    //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+    //         // This is a no-op (reading and writing same local)
+    //         return std::vector<BCInstruction>();
+    //     }
+    // });
+
+    // // Pattern 8: Optimize push_empty_string + get_field2 for concat
+    // patterns.push_back({
+    //     {OP_push_empty_string, OP_get_field2},
+    //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+    //         if (pos + 1 >= instructions.size()) return false;
+    //         return instructions[pos].bc == OP_push_empty_string &&
+    //                instructions[pos + 1].bc == OP_get_field2;
+    //     },
+    //     [](const std::vector<BCInstruction>& instructions, size_t pos) {
+    //         // Keep as is but mark for potential string builder optimization
+    //         return std::vector<BCInstruction>{instructions[pos], instructions[pos + 1]};
+    //     }
+    // });
   }
-  
-  std::vector<BCInstruction> optimize(const std::vector<BCInstruction>& instructions) {
-      std::vector<BCInstruction> optimized;
-      
-      // Keep first dummy instruction
-      if (!instructions.empty()) {
-          optimized.push_back(instructions[0]);
+
+  std::vector<BCInstruction> optimize(const std::vector<BCInstruction> &instructions)
+  {
+    std::vector<BCInstruction> optimized;
+
+    // Keep first dummy instruction
+    if (!instructions.empty())
+    {
+      optimized.push_back(instructions[0]);
+    }
+
+    size_t i = 1;
+    while (i < instructions.size())
+    {
+      bool matched = false;
+
+      // Try each pattern
+      for (const auto &pattern : patterns)
+      {
+        if (pattern.matcher(instructions, i))
+        {
+          auto replacement = pattern.replacer(instructions, i);
+          optimized.insert(optimized.end(), replacement.begin(), replacement.end());
+          i += pattern.pattern.size(); // Skip matched instructions
+          matched = true;
+          break;
+        }
       }
-      
-      size_t i = 1;
-      while (i < instructions.size()) {
-          bool matched = false;
-          
-          // Try each pattern
-          for (const auto& pattern : patterns) {
-              if (pattern.matcher(instructions, i)) {
-                  auto replacement = pattern.replacer(instructions, i);
-                  optimized.insert(optimized.end(), replacement.begin(), replacement.end());
-                  i += pattern.pattern.size(); // Skip matched instructions
-                  matched = true;
-                  break;
-              }
-          }
-          
-          if (!matched) {
-              optimized.push_back(instructions[i]);
-              i++;
-          }
+
+      if (!matched)
+      {
+        optimized.push_back(instructions[i]);
+        i++;
       }
-      
-      return optimized;
+    }
+
+    return optimized;
   }
 };
 
@@ -3606,7 +3668,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   // Fill CPool with closures (same as before)
   for (int i = 0; i < numModules; i++)
   {
-    IridiumSEXP *bbContainer = file->args[moduleMetaEntries+i];
+    IridiumSEXP *bbContainer = file->args[moduleMetaEntries + i];
     ensureTag(bbContainer, "BBContainer");
 
     IridiumSEXP *bindingsInfo = bbContainer->args[0];
@@ -3623,7 +3685,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     {
       IridiumSEXP *poolBinding = lambdasList->args[j];
       ensureTag(poolBinding, "PoolBinding");
-      
+
       // StartBBIDX of Closure that is needed
       int targetStartBBIDX = getFlagNumber(poolBinding, "StartBBIDX");
 
@@ -3632,7 +3694,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       bool found = false;
       for (int k = 0; k < numModules; k++)
       {
-        IridiumSEXP *bbContainer = file->args[moduleMetaEntries+k];
+        IridiumSEXP *bbContainer = file->args[moduleMetaEntries + k];
         ensureTag(bbContainer, "BBContainer");
         int closureStartBBIDX = getFlagNumber(bbContainer, "StartBBIDX");
         if (closureStartBBIDX == targetStartBBIDX)
@@ -3722,7 +3784,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 1. Create External Module Requests
     m->req_module_entries_count = moduleRequests->numArgs;
     m->req_module_entries_size = m->req_module_entries_count;
-    m->req_module_entries = (JSReqModuleEntry*)js_mallocz(ctx, sizeof(m->req_module_entries[0]) * m->req_module_entries_size);
+    m->req_module_entries = (JSReqModuleEntry *)js_mallocz(ctx, sizeof(m->req_module_entries[0]) * m->req_module_entries_size);
 
     for (int r = 0; r < moduleRequests->numArgs; ++r)
     {
@@ -3737,7 +3799,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 2. Link Static Import Targets
     m->import_entries_count = staticImports->numArgs;
     m->import_entries_size = m->import_entries_count;
-    m->import_entries = (JSImportEntry*)js_mallocz(ctx, sizeof(m->import_entries[0]) * m->import_entries_size);
+    m->import_entries = (JSImportEntry *)js_mallocz(ctx, sizeof(m->import_entries[0]) * m->import_entries_size);
 
     for (int im = 0; im < staticImports->numArgs; ++im)
     {
@@ -3774,7 +3836,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 3. Link Exports
     m->export_entries_count = staticExports->numArgs;
     m->export_entries_size = m->export_entries_count;
-    m->export_entries = (JSExportEntry*)js_mallocz(ctx, sizeof(m->export_entries[0]) * m->export_entries_size);
+    m->export_entries = (JSExportEntry *)js_mallocz(ctx, sizeof(m->export_entries[0]) * m->export_entries_size);
 
     for (int ex = 0; ex < staticExports->numArgs; ++ex)
     {
@@ -3809,7 +3871,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     // 4. Star Exports
     m->star_export_entries_count = starExports->numArgs;
     m->star_export_entries_size = m->star_export_entries_count;
-    m->star_export_entries = (JSStarExportEntry*)js_mallocz(ctx, sizeof(m->star_export_entries[0]) * m->star_export_entries_size);
+    m->star_export_entries = (JSStarExportEntry *)js_mallocz(ctx, sizeof(m->star_export_entries[0]) * m->star_export_entries_size);
 
     for (int ex = 0; ex < starExports->numArgs; ++ex)
     {
@@ -3844,7 +3906,7 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   IridiumLoadResult iriRes = compile_iri_module(ctx, json);
   if (iriRes.isModule)
   {
-    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef*)iriRes.ptr);
+    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
 
     JS_ResolveModule(ctx, moduleVal);
     JSValue res = JS_EvalFunction(ctx, moduleVal);
@@ -3897,7 +3959,7 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
 
   if (iriRes.isModule)
   {
-    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef*)iriRes.ptr);
+    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
 
     JS_ResolveModule(ctx, moduleVal);
     JSValue res = JS_EvalFunction(ctx, moduleVal);
