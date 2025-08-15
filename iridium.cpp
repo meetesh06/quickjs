@@ -808,7 +808,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "Number"))
   {
-    int data = getFlagDouble(rval, "IridiumPrimitive");
+    double data = getFlagDouble(rval, "IridiumPrimitive");
     JSValue jsvalue = JS_NewNumber(ctx, data);
     return pushOPConst(ctx, instructions, OP_push_const, jsvalue);
   }
