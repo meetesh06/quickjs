@@ -881,8 +881,17 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       lowerToStack(ctx, instructions, rval->args[i]);
     }
 
-    // Emit Call
-    if (hasFlag(rval, "Super"))
+    if (hasFlag(rval, "JSDirectEval")) {
+      uint32_t data = 0;
+      uint16_t *d1 = (uint16_t *) &data;
+      uint16_t *d2 = d1 + 1;
+
+      *d1 = rval->numArgs - 1;
+      *d2 = getFlagNumber(rval, "JSDirectEval"); // scopeIdx
+      
+      // Arguments were pushed
+      return pushOP32(ctx, instructions, OP_eval, data);
+    } else if (hasFlag(rval, "Super"))
     {
       return pushOP16(ctx, instructions, OP_call_constructor, rval->numArgs - 2);
     }
@@ -2930,7 +2939,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCI
     // int refIDX = getFlagNumber(envBinding, "REFIDX");
     // assert(refIDX == i && "Local VarDef idx not found");
     int scope_level = getFlagNumber(envBinding, "Scope");
-    int scope_next = getFlagNumber(envBinding, "ParentScope");
+    int scope_next = hasFlag(envBinding, "NEXT") ? getFlagNumber(envBinding, "NEXT") : -1;
     char *name = getFlagString(envBinding, "NAME");
 
     b->vardefs[i].var_name = JS_NewAtom(ctx, name);
@@ -2943,18 +2952,19 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCI
     b->vardefs[i].is_captured = 0;
     b->vardefs[i].is_static_private = 0;
 
-    if (hasFlag(envBinding, "JSARG") || hasFlag(envBinding, "JSRESTARG"))
+    if (hasFlag(envBinding, "JSVAR") || hasFlag(envBinding, "JSARG") || hasFlag(envBinding, "JSRESTARG"))
     {
       // fprintf(stderr, "JSARG not expected...");
       // exit(1);
       // NONE
     }
-    else if (hasFlag(envBinding, "JSLET") || hasFlag(envBinding, "JSVAR"))
+    else if (hasFlag(envBinding, "JSLET"))
     {
-      // NONE
+      b->vardefs[i].is_lexical = true;
     }
     else if (hasFlag(envBinding, "JSCONST"))
     {
+      b->vardefs[i].is_lexical = true;
       b->vardefs[i].is_const = true;
     }
     else
@@ -3899,7 +3909,7 @@ void eval_iri_file(JSContext *ctx, const char *filename)
   if (json == NULL)
   {
     printf("Failed to load JSON.\n");
-    return;
+    exit(1);
   }
 
   IridiumLoadResult iriRes = compile_iri_module(ctx, json);
@@ -3928,7 +3938,7 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
   if (json == NULL)
   {
     printf("Failed to load JSON.\n");
-    return;
+    exit(1);
   }
 
   cJSON *pika = cJSON_GetObjectItem(json, "pika");
