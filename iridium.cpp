@@ -649,6 +649,25 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
   {
     if (isTag(loc, "RemoteEnvBinding"))
     {
+
+      if (!safe) {
+        // Unsafe writes const results in error...
+        IridiumSEXP *next = loc->args[0];
+
+        while (isTag(next, "RemoteEnvBinding"))
+        {
+          next = next->args[0];
+        }
+
+        ensureTag(next, "EnvBinding");
+
+        if (hasFlag(next, "JSCONST")) {
+          pushOP(ctx, instructions, OP_drop);
+          pushOP32Flags(ctx, instructions, OP_throw_error, JS_NewAtom(ctx, getFlagString(next, "NAME")), 0);
+          return;
+        }
+      }
+
       int refIdx = getFlagNumber(loc, "REFIDX");
       pushOP16(ctx, instructions, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref
                                                                               : OP_put_var_ref_check,
@@ -656,6 +675,15 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
     }
     else if (isTag(loc, "EnvBinding"))
     {
+
+      if (!safe) {
+        if (hasFlag(loc, "JSCONST")) {
+          pushOP(ctx, instructions, OP_drop);
+          pushOP32Flags(ctx, instructions, OP_throw_error, JS_NewAtom(ctx, getFlagString(loc, "NAME")), 0);
+          return;
+        }
+      }
+
       int refIdx = getFlagNumber(loc, "REFIDX");
       pushOP16(ctx, instructions, thisInit ? OP_put_loc_check_init : safe ? OP_put_loc
                                                                           : OP_put_loc_check,
@@ -997,7 +1025,13 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     }
     else if (strcmp(op, "typeof") == 0)
     {
-      lowerToStack(ctx, instructions, rval->args[0]);
+      if (isTag(rval->args[0], "EnvRead") && isTag(rval->args[0]->args[0], "GlobalBinding")) {
+        // If the argument is an envread; then dont read the binding, use the binding directly
+        pushOP32(ctx, instructions, OP_get_var_undef, JS_NewAtom(ctx, getFlagString(rval->args[0]->args[0], "NAME")));
+      } else {
+        lowerToStack(ctx, instructions, rval->args[0]);
+      }
+      
       return pushOP(ctx, instructions, OP_typeof);
     }
     else if (strcmp(op, "delete") == 0)
