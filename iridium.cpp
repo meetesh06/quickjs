@@ -676,6 +676,18 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
     else if (isTag(loc, "EnvBinding"))
     {
 
+      if (hasFlag(loc, "JSARG"))
+      {
+        int argIdx = getFlagNumber(loc, "REFIDX");
+        assert(argIdx > -1);
+        return pushOP16(ctx, instructions, OP_put_arg, argIdx);
+      }
+      else if (hasFlag(loc, "JSRESTARG"))
+      {
+        fprintf(stderr, "TODO: handle stores to JSRESTARG");
+        exit(1);
+      }
+
       if (!safe) {
         if (hasFlag(loc, "JSCONST")) {
           pushOP(ctx, instructions, OP_drop);
