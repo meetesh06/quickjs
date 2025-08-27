@@ -1394,7 +1394,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
         // Define method on the prototype
         pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
       }
-      else if (isTag(methodName, "Private"))
+      else if (isTag(methodName, "JSPrivate"))
       {
         // Get the lambda on the stack
         lowerToStack(ctx, instructions, methodLambda);
@@ -1463,7 +1463,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
         // Define method on the prototype
         pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
       }
-      else if (isTag(methodName, "Private"))
+      else if (isTag(methodName, "JSPrivate"))
       {
         // Get the lambda on the stack
         lowerToStack(ctx, instructions, methodLambda);
@@ -1517,7 +1517,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     }
     return pushOP16(ctx, instructions, OP_array_from, rval->numArgs);
   }
-  else if (isTag(rval, "Private"))
+  else if (isTag(rval, "JSPrivate"))
   {
     char *data = getFlagString(rval, "IridiumPrimitive");
     JSAtom strAtom = JS_NewAtom(ctx, data);
@@ -2454,69 +2454,89 @@ void freeBCLList(JSContext *ctx, vector<BCInstruction> &instructions)
   instructions.shrink_to_fit();
 }
 
-void populateBytecode(uint8_t *target, const std::vector<BCInstruction> &instructions, size_t index, int &poolIDX)
+// void populateBytecode(uint8_t *target, const std::vector<BCInstruction> &instructions, size_t index, int &poolIDX)
+// {
+//   if (index >= instructions.size())
+//     return;
+
+//   const BCInstruction &currBC = instructions[index];
+
+//   if (currBC.hasPoolData)
+//   {
+//     // Note: This modifies poolIDX, but we can't modify the original data
+//     // You may need to handle pool data differently depending on your use case
+//     assert(currBC.valueSize == 4);
+//   }
+
+//   target[0] = currBC.bc;
+
+//   if (currBC.valueSize == 1)
+//   {
+//     uint8_t *t = (uint8_t *)(target + 1);
+//     *t = currBC.hasPoolData ? poolIDX++ : currBC.data.one;
+//   }
+//   else if (currBC.valueSize == 2)
+//   {
+//     uint16_t *t = (uint16_t *)(target + 1);
+//     *t = currBC.hasPoolData ? poolIDX++ : currBC.data.two;
+//   }
+//   else if (currBC.valueSize == 4)
+//   {
+//     uint32_t *t = (uint32_t *)(target + 1);
+//     *t = currBC.hasPoolData ? poolIDX++ : currBC.data.four;
+//   }
+
+//   if (currBC.hasFlags)
+//   {
+//     uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC.bc).size - 1);
+//     *t = currBC.flags;
+//   }
+
+//   return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 1, poolIDX);
+// }
+
+void populateBytecode(uint8_t *target, const std::vector<BCInstruction> &instructions, size_t startIndex, int &poolIDX)
 {
-  if (index >= instructions.size())
-    return;
+    size_t index = startIndex;
 
-  const BCInstruction &currBC = instructions[index];
+    while (index < instructions.size())
+    {
+        const BCInstruction &currBC = instructions[index];
 
-  if (currBC.hasPoolData)
-  {
-    // Note: This modifies poolIDX, but we can't modify the original data
-    // You may need to handle pool data differently depending on your use case
-    assert(currBC.valueSize == 4);
-  }
+        if (currBC.hasPoolData)
+        {
+            // Note: This modifies poolIDX, but we can't modify the original data
+            assert(currBC.valueSize == 4);
+        }
 
-  target[0] = currBC.bc;
+        target[0] = currBC.bc;
 
-  if (currBC.valueSize == 1)
-  {
-    uint8_t *t = (uint8_t *)(target + 1);
-    *t = currBC.hasPoolData ? poolIDX++ : currBC.data.one;
-  }
-  else if (currBC.valueSize == 2)
-  {
-    uint16_t *t = (uint16_t *)(target + 1);
-    *t = currBC.hasPoolData ? poolIDX++ : currBC.data.two;
-  }
-  else if (currBC.valueSize == 4)
-  {
-    uint32_t *t = (uint32_t *)(target + 1);
-    *t = currBC.hasPoolData ? poolIDX++ : currBC.data.four;
-  }
+        if (currBC.valueSize == 1)
+        {
+            uint8_t *t = (uint8_t *)(target + 1);
+            *t = currBC.hasPoolData ? poolIDX++ : currBC.data.one;
+        }
+        else if (currBC.valueSize == 2)
+        {
+            uint16_t *t = (uint16_t *)(target + 1);
+            *t = currBC.hasPoolData ? poolIDX++ : currBC.data.two;
+        }
+        else if (currBC.valueSize == 4)
+        {
+            uint32_t *t = (uint32_t *)(target + 1);
+            *t = currBC.hasPoolData ? poolIDX++ : currBC.data.four;
+        }
 
-  // if (currBC.bc == OP_define_method || currBC.bc == OP_define_class)
-  // {
-  //   if (index + 1 < instructions.size())
-  //   {
-  //     uint8_t *t = (uint8_t *)(target + 5); // {0: OP} {atom: 1 2 3 4} {flag: 5}
-  //     // Next slot is the op_flag
-  //     *t = instructions[index + 1].bc;
-  //     return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 2, poolIDX);
-  //   }
-  //   return;
-  // }
+        if (currBC.hasFlags)
+        {
+            uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC.bc).size - 1);
+            *t = currBC.flags;
+        }
 
-  // if (currBC.bc == OP_define_method_computed)
-  // {
-  //   if (index + 1 < instructions.size())
-  //   {
-  //     uint8_t *t = (uint8_t *)(target + 2); // {0: OP} {flag: 1}
-  //     // Next slot is the op_flag
-  //     *t = instructions[index + 1].bc;
-  //     return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 2, poolIDX);
-  //   }
-  //   return;
-  // }
-
-  if (currBC.hasFlags)
-  {
-    uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC.bc).size - 1);
-    *t = currBC.flags;
-  }
-
-  return populateBytecode(target + short_opcode_info(currBC.bc).size, instructions, index + 1, poolIDX);
+        // Advance to next instruction
+        target += short_opcode_info(currBC.bc).size;
+        index++;
+    }
 }
 
 // Alternative wrapper function to maintain similar interface
