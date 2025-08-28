@@ -153,38 +153,39 @@ cJSON *load_json(const char *path)
 void populateArgs(IridiumSEXP *res, cJSON *args)
 {
   int argsNum = res->numArgs = cJSON_GetArraySize(args);
-  res->args = (IridiumSEXP **)malloc(argsNum * sizeof(IridiumSEXP **));
-  for (int i = 0; i < argsNum; ++i)
+  res->args = (IridiumSEXP **)malloc(argsNum * sizeof(IridiumSEXP *));
+
+  int idx = 0;
+  for (cJSON *arg = args->child; arg != NULL; arg = arg->next)
   {
-    res->args[i] = parseIridiumSEXP(cJSON_GetArrayItem(args, i));
+    res->args[idx++] = parseIridiumSEXP(arg);
   }
 }
 
 void populateFlags(IridiumSEXP *res, cJSON *flags)
 {
   int flagsNum = res->numFlags = cJSON_GetArraySize(flags);
-  res->flags = (IridiumFlag **)malloc(flagsNum * sizeof(IridiumSEXP **));
-  for (int i = 0; i < flagsNum; ++i)
+  res->flags = (IridiumFlag **)malloc(flagsNum * sizeof(IridiumFlag *));
+
+  int idx = 0;
+  for (cJSON *flag = flags->child; flag != NULL; flag = flag->next)
   {
-    cJSON *flag = cJSON_GetArrayItem(flags, i);
     if (cJSON_GetArraySize(flag) != 2)
     {
       fprintf(stderr, "Expected flag array size to be 2\n");
       exit(1);
     }
 
-    char *flagName = cJSON_GetStringValue(cJSON_GetArrayItem(flag, 0));
-    cJSON *flagVal = cJSON_GetArrayItem(flag, 1);
+    char *flagName = cJSON_GetStringValue(flag->child);
+    cJSON *flagVal = flag->child->next;
 
-    // IridiumFlag *currFlag = malloc(sizeof(IridiumFlag));
-    IridiumFlag *currFlag = new IridiumFlag; //@@
-    res->flags[i] = currFlag;
+    IridiumFlag *currFlag = new IridiumFlag;
+    res->flags[idx++] = currFlag;
     currFlag->name = flagName;
 
-    // Handle Iridium Primitives
     if (cJSON_IsBool(flagVal))
     {
-      currFlag->value.boolean = cJSON_IsTrue(flagVal) ? true : false;
+      currFlag->value.boolean = cJSON_IsTrue(flagVal);
       currFlag->datatype = BOOLEAN;
     }
     else if (cJSON_IsNumber(flagVal))
@@ -650,7 +651,8 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
     if (isTag(loc, "RemoteEnvBinding"))
     {
 
-      if (!safe) {
+      if (!safe)
+      {
         // Unsafe writes const results in error...
         IridiumSEXP *next = loc->args[0];
 
@@ -661,7 +663,8 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
 
         ensureTag(next, "EnvBinding");
 
-        if (hasFlag(next, "JSCONST")) {
+        if (hasFlag(next, "JSCONST"))
+        {
           pushOP(ctx, instructions, OP_drop);
           pushOP32Flags(ctx, instructions, OP_throw_error, JS_NewAtom(ctx, getFlagString(next, "NAME")), 0);
           return;
@@ -688,8 +691,10 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
         exit(1);
       }
 
-      if (!safe) {
-        if (hasFlag(loc, "JSCONST")) {
+      if (!safe)
+      {
+        if (hasFlag(loc, "JSCONST"))
+        {
           pushOP(ctx, instructions, OP_drop);
           pushOP32Flags(ctx, instructions, OP_throw_error, JS_NewAtom(ctx, getFlagString(loc, "NAME")), 0);
           return;
@@ -848,9 +853,40 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "Number"))
   {
+    // double data = getFlagDouble(rval, "IridiumPrimitive");
+    // JSValue jsvalue = JS_NewNumber(ctx, data);
+    // return pushOPConst(ctx, instructions, OP_push_const, jsvalue);
+
     double data = getFlagDouble(rval, "IridiumPrimitive");
+
+    // Check if exactly an integer
+    double truncated = trunc(data);
+    if (data == truncated) {
+        int64_t val = (int64_t)truncated;
+
+        switch (val) {
+            case -1: return pushOP(ctx, instructions, OP_push_minus1);
+            case  0: return pushOP(ctx, instructions, OP_push_0);
+            case  1: return pushOP(ctx, instructions, OP_push_1);
+            case  2: return pushOP(ctx, instructions, OP_push_2);
+            case  3: return pushOP(ctx, instructions, OP_push_3);
+            case  4: return pushOP(ctx, instructions, OP_push_4);
+            case  5: return pushOP(ctx, instructions, OP_push_5);
+            case  6: return pushOP(ctx, instructions, OP_push_6);
+            case  7: return pushOP(ctx, instructions, OP_push_7);
+        }
+
+        if (val >= INT8_MIN && val <= INT8_MAX)
+          return pushOP8(ctx, instructions, OP_push_i8, (int8_t)val);
+
+        if (val >= INT16_MIN && val <= INT16_MAX)
+            return pushOP16(ctx, instructions, OP_push_i16, (int16_t)val);
+    }
+
+    // Fallback
     JSValue jsvalue = JS_NewNumber(ctx, data);
     return pushOPConst(ctx, instructions, OP_push_const, jsvalue);
+
   }
   else if (isTag(rval, "JSNUBD"))
   {
@@ -921,9 +957,10 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       lowerToStack(ctx, instructions, rval->args[i]);
     }
 
-    if (hasFlag(rval, "JSDirectEval")) {
+    if (hasFlag(rval, "JSDirectEval"))
+    {
       uint32_t data = 0;
-      uint16_t *d1 = (uint16_t *) &data;
+      uint16_t *d1 = (uint16_t *)&data;
       uint16_t *d2 = d1 + 1;
 
       *d1 = rval->numArgs - 1;
@@ -931,7 +968,8 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       
       // Arguments were pushed
       return pushOP32(ctx, instructions, OP_eval, data);
-    } else if (hasFlag(rval, "Super"))
+    }
+    else if (hasFlag(rval, "Super"))
     {
       return pushOP16(ctx, instructions, OP_call_constructor, rval->numArgs - 2);
     }
@@ -1037,13 +1075,16 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     }
     else if (strcmp(op, "typeof") == 0)
     {
-      if (isTag(rval->args[0], "EnvRead") && isTag(rval->args[0]->args[0], "GlobalBinding")) {
+      if (isTag(rval->args[0], "EnvRead") && isTag(rval->args[0]->args[0], "GlobalBinding"))
+      {
         // If the argument is an envread; then dont read the binding, use the binding directly
         pushOP32(ctx, instructions, OP_get_var_undef, JS_NewAtom(ctx, getFlagString(rval->args[0]->args[0], "NAME")));
-      } else {
+      }
+      else
+      {
         lowerToStack(ctx, instructions, rval->args[0]);
       }
-      
+
       return pushOP(ctx, instructions, OP_typeof);
     }
     else if (strcmp(op, "delete") == 0)
@@ -1511,11 +1552,31 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "JSArray"))
   {
-    for (int i = 0; i < rval->numArgs; i++)
+    if (rval->numArgs < 32)
     {
-      lowerToStack(ctx, instructions, rval->args[i]);
+      for (int i = 0; i < rval->numArgs; i++)
+      {
+        lowerToStack(ctx, instructions, rval->args[i]);
+      }
+      return pushOP16(ctx, instructions, OP_array_from, rval->numArgs);
     }
-    return pushOP16(ctx, instructions, OP_array_from, rval->numArgs);
+    else
+    {
+      // 0 - 31
+      for (int i = 0; i < 32; i++)
+      {
+        lowerToStack(ctx, instructions, rval->args[i]);
+      }
+      pushOP16(ctx, instructions, OP_array_from, 32);
+      // > 31
+      for (int i = 32; i < rval->numArgs; i++)
+      {
+        lowerToStack(ctx, instructions, rval->args[i]);
+        JSAtom fieldAtom = JS_NewAtomUInt32(ctx, i);
+        pushOP32(ctx, instructions, OP_define_field, fieldAtom);
+      }
+    }
+    
   }
   else if (isTag(rval, "JSPrivate"))
   {
@@ -2497,46 +2558,46 @@ void freeBCLList(JSContext *ctx, vector<BCInstruction> &instructions)
 
 void populateBytecode(uint8_t *target, const std::vector<BCInstruction> &instructions, size_t startIndex, int &poolIDX)
 {
-    size_t index = startIndex;
+  size_t index = startIndex;
 
-    while (index < instructions.size())
+  while (index < instructions.size())
+  {
+    const BCInstruction &currBC = instructions[index];
+
+    if (currBC.hasPoolData)
     {
-        const BCInstruction &currBC = instructions[index];
-
-        if (currBC.hasPoolData)
-        {
-            // Note: This modifies poolIDX, but we can't modify the original data
-            assert(currBC.valueSize == 4);
-        }
-
-        target[0] = currBC.bc;
-
-        if (currBC.valueSize == 1)
-        {
-            uint8_t *t = (uint8_t *)(target + 1);
-            *t = currBC.hasPoolData ? poolIDX++ : currBC.data.one;
-        }
-        else if (currBC.valueSize == 2)
-        {
-            uint16_t *t = (uint16_t *)(target + 1);
-            *t = currBC.hasPoolData ? poolIDX++ : currBC.data.two;
-        }
-        else if (currBC.valueSize == 4)
-        {
-            uint32_t *t = (uint32_t *)(target + 1);
-            *t = currBC.hasPoolData ? poolIDX++ : currBC.data.four;
-        }
-
-        if (currBC.hasFlags)
-        {
-            uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC.bc).size - 1);
-            *t = currBC.flags;
-        }
-
-        // Advance to next instruction
-        target += short_opcode_info(currBC.bc).size;
-        index++;
+      // Note: This modifies poolIDX, but we can't modify the original data
+      assert(currBC.valueSize == 4);
     }
+
+    target[0] = currBC.bc;
+
+    if (currBC.valueSize == 1)
+    {
+      uint8_t *t = (uint8_t *)(target + 1);
+      *t = currBC.hasPoolData ? poolIDX++ : currBC.data.one;
+    }
+    else if (currBC.valueSize == 2)
+    {
+      uint16_t *t = (uint16_t *)(target + 1);
+      *t = currBC.hasPoolData ? poolIDX++ : currBC.data.two;
+    }
+    else if (currBC.valueSize == 4)
+    {
+      uint32_t *t = (uint32_t *)(target + 1);
+      *t = currBC.hasPoolData ? poolIDX++ : currBC.data.four;
+    }
+
+    if (currBC.hasFlags)
+    {
+      uint8_t *t = (uint8_t *)(target + short_opcode_info(currBC.bc).size - 1);
+      *t = currBC.flags;
+    }
+
+    // Advance to next instruction
+    target += short_opcode_info(currBC.bc).size;
+    index++;
+  }
 }
 
 // Alternative wrapper function to maintain similar interface
@@ -4015,7 +4076,7 @@ void eval_iri_pika(JSContext *ctx, const char *filename)
     exit(1);
   }
 
-  IridiumLoadResult iriRes;
+  IridiumLoadResult iriRes = {false, nullptr};
 
   int numModules = cJSON_GetArraySize(pika);
 
