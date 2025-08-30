@@ -15,6 +15,27 @@ extern "C"
 #include <iterator>
 #include <unordered_set>
 #include <iostream>
+#include <chrono>
+#include <string>
+
+class ScopedTimer
+{
+public:
+  ScopedTimer(const std::string &name)
+      : name_(name), start_(std::chrono::high_resolution_clock::now()) {}
+
+  ~ScopedTimer()
+  {
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);
+    std::cout << name_ << " took " << duration.count() << " ms\n";
+  }
+
+private:
+  std::string name_;
+  std::chrono::high_resolution_clock::time_point start_;
+};
+
 using namespace std;
 
 #define check_dump_flag(ctx, flag) ((JS_GetDumpFlags(ctx->rt) & (flag + 0)) == (flag + 0))
@@ -861,32 +882,42 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
 
     // Check if exactly an integer
     double truncated = trunc(data);
-    if (data == truncated) {
-        int64_t val = (int64_t)truncated;
+    if (data == truncated)
+    {
+      int64_t val = (int64_t)truncated;
 
-        switch (val) {
-            case -1: return pushOP(ctx, instructions, OP_push_minus1);
-            case  0: return pushOP(ctx, instructions, OP_push_0);
-            case  1: return pushOP(ctx, instructions, OP_push_1);
-            case  2: return pushOP(ctx, instructions, OP_push_2);
-            case  3: return pushOP(ctx, instructions, OP_push_3);
-            case  4: return pushOP(ctx, instructions, OP_push_4);
-            case  5: return pushOP(ctx, instructions, OP_push_5);
-            case  6: return pushOP(ctx, instructions, OP_push_6);
-            case  7: return pushOP(ctx, instructions, OP_push_7);
-        }
+      switch (val)
+      {
+      case -1:
+        return pushOP(ctx, instructions, OP_push_minus1);
+      case 0:
+        return pushOP(ctx, instructions, OP_push_0);
+      case 1:
+        return pushOP(ctx, instructions, OP_push_1);
+      case 2:
+        return pushOP(ctx, instructions, OP_push_2);
+      case 3:
+        return pushOP(ctx, instructions, OP_push_3);
+      case 4:
+        return pushOP(ctx, instructions, OP_push_4);
+      case 5:
+        return pushOP(ctx, instructions, OP_push_5);
+      case 6:
+        return pushOP(ctx, instructions, OP_push_6);
+      case 7:
+        return pushOP(ctx, instructions, OP_push_7);
+      }
 
-        if (val >= INT8_MIN && val <= INT8_MAX)
-          return pushOP8(ctx, instructions, OP_push_i8, (int8_t)val);
+      if (val >= INT8_MIN && val <= INT8_MAX)
+        return pushOP8(ctx, instructions, OP_push_i8, (int8_t)val);
 
-        if (val >= INT16_MIN && val <= INT16_MAX)
-            return pushOP16(ctx, instructions, OP_push_i16, (int16_t)val);
+      if (val >= INT16_MIN && val <= INT16_MAX)
+        return pushOP16(ctx, instructions, OP_push_i16, (int16_t)val);
     }
 
     // Fallback
     JSValue jsvalue = JS_NewNumber(ctx, data);
     return pushOPConst(ctx, instructions, OP_push_const, jsvalue);
-
   }
   else if (isTag(rval, "JSNUBD"))
   {
@@ -965,7 +996,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
 
       *d1 = rval->numArgs - 1;
       *d2 = getFlagNumber(rval, "JSDirectEval"); // scopeIdx
-      
+
       // Arguments were pushed
       return pushOP32(ctx, instructions, OP_eval, data);
     }
@@ -1576,7 +1607,6 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
         pushOP32(ctx, instructions, OP_define_field, fieldAtom);
       }
     }
-    
   }
   else if (isTag(rval, "JSPrivate"))
   {
@@ -2019,25 +2049,27 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   // {
   //   return lowerToStack(ctx, instructions, currStmt->args[0]);
   // }
-  else if (isTag(currStmt, "IfJump"))
-  {
-    // Push check to stack
-    lowerToStack(ctx, instructions, currStmt->args[0]);
+  // else if (isTag(currStmt, "IfJump"))
+  // {
+  //   // Push check to stack
+  //   lowerToStack(ctx, instructions, currStmt->args[0]);
 
-    bool isNot = hasFlag(currStmt, "NOT");
+  //   bool isNot = hasFlag(currStmt, "NOT");
 
-    // Jmp to TRUE if stack value is true
-    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
+  //   // Jmp to TRUE if stack value is true
+  //   pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
 
-    return;
-  }
+  //   return;
+  // }
   else if (isTag(currStmt, "IfElseJump"))
   {
+    bool isNot = hasFlag(currStmt, "NOT");
+
     // Push check to stack
     lowerToStack(ctx, instructions, currStmt->args[0]);
 
     // Jmp to TRUE if stack value is true
-    pushOP32(ctx, instructions, OP_if_true, getFlagNumber(currStmt, "TRUE"));
+    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "TRUE"));
 
     // Jmp to FALSE if stack value is false
     pushOP32(ctx, instructions, OP_goto, getFlagNumber(currStmt, "FALSE"));
@@ -3882,10 +3914,18 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     exit(1);
   }
 
-  IridiumSEXP *iridiumCode = parseIridiumSEXP(code);
+  IridiumSEXP *iridiumCode;
+  {
+    // ScopedTimer t("parseIridiumSEXP");
+    iridiumCode = parseIridiumSEXP(code);
+  }
 
   // Generate BC
-  JSValue moduleFunVal = generateBytecode(ctx, iridiumCode);
+  JSValue moduleFunVal;
+  {
+    // ScopedTimer t("generateBytecode");
+    moduleFunVal = generateBytecode(ctx, iridiumCode);
+  }
 
   JSFunctionBytecode *b = (JSFunctionBytecode *)moduleFunVal.u.ptr;
   bool isModule = hasFlag(iridiumCode, "JSModule");
@@ -4031,28 +4071,35 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
 void eval_iri_file(JSContext *ctx, const char *filename)
 {
-  cJSON *json = load_json(filename);
+  cJSON *json;
+  {
+    // ScopedTimer t("load_json");
+    json = load_json(filename);
+  }
 
   if (json == NULL)
   {
     printf("Failed to load JSON.\n");
     exit(1);
   }
-
-  IridiumLoadResult iriRes = compile_iri_module(ctx, json);
-  if (iriRes.isModule)
   {
-    JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
+    IridiumLoadResult iriRes = compile_iri_module(ctx, json);
+    
+    // ScopedTimer t("evalIri");
+    if (iriRes.isModule)
+    {
+      JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
 
-    JS_ResolveModule(ctx, moduleVal);
-    JSValue res = JS_EvalFunction(ctx, moduleVal);
-    JS_FreeValue(ctx, res);
-  }
-  else
-  {
-    JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
-    JSValue res = JS_EvalFunction(ctx, func_val);
-    JS_FreeValue(ctx, res);
+      JS_ResolveModule(ctx, moduleVal);
+      JSValue res = JS_EvalFunction(ctx, moduleVal);
+      JS_FreeValue(ctx, res);
+    }
+    else
+    {
+      JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
+      JSValue res = JS_EvalFunction(ctx, func_val);
+      JS_FreeValue(ctx, res);
+    }
   }
 
   cJSON_Delete(json);
