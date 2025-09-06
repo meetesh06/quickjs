@@ -2049,18 +2049,18 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   // {
   //   return lowerToStack(ctx, instructions, currStmt->args[0]);
   // }
-  // else if (isTag(currStmt, "IfJump"))
-  // {
-  //   // Push check to stack
-  //   lowerToStack(ctx, instructions, currStmt->args[0]);
+  else if (isTag(currStmt, "IfJump"))
+  {
+    // Push check to stack
+    lowerToStack(ctx, instructions, currStmt->args[0]);
 
-  //   bool isNot = hasFlag(currStmt, "NOT");
+    bool isNot = hasFlag(currStmt, "NOT");
 
-  //   // Jmp to TRUE if stack value is true
-  //   pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
+    // Jmp to TRUE if stack value is true
+    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
 
-  //   return;
-  // }
+    return;
+  }
   else if (isTag(currStmt, "IfElseJump"))
   {
     bool isNot = hasFlag(currStmt, "NOT");
@@ -2099,7 +2099,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   {
     return pushOP32(ctx, instructions, OP_catch, getFlagNumber(currStmt, "IDX"));
   }
-  else if (isTag(currStmt, "PopCatchContext"))
+  else if (isTag(currStmt, "PopCatchContext") || isTag(currStmt, "PopFinalizerReturnTarget"))
   {
     return pushOP(ctx, instructions, OP_drop);
   }
@@ -3090,7 +3090,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCI
   b->stack_size = compute_stack_size(ctx, b->byte_code_buf, b->byte_code_len);
 
   // Initialize Arg + Var Defs
-  for (int i = 0; i < var_count; i++)
+  for (int i = 0; i < arg_count + var_count; i++)
   {
     IridiumSEXP *envBinding = localBindingsSEXP->args[i];
     ensureTag(envBinding, "EnvBinding");
