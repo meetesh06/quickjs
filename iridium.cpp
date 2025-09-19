@@ -818,7 +818,7 @@ void keepNDropM(JSContext *ctx, vector<BCInstruction> &instructions, int N, int 
   return;
 }
 
-void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval)
+void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool safeRead = false)
 {
   if (isTag(rval, "JSForInStart"))
   {
@@ -948,7 +948,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     else
     {
       int refIDX = getFlagNumber(rval, "REFIDX");
-      return pushOP16(ctx, instructions, OP_get_loc_check, refIDX);
+      return pushOP16(ctx, instructions, safeRead ? OP_get_loc : OP_get_loc_check, refIDX);
     }
   }
   else if (isTag(rval, "GlobalBinding"))
@@ -1023,7 +1023,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "EnvRead"))
   {
-    return lowerToStack(ctx, instructions, rval->args[0]);
+    return lowerToStack(ctx, instructions, rval->args[0], hasFlag(rval, "SAFE"));
   }
   else if (isTag(rval, "PVTEnvRead"))
   {
