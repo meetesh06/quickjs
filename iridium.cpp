@@ -693,10 +693,32 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
         }
       }
 
-      int refIdx = getFlagNumber(loc, "REFIDX");
-      pushOP16(ctx, instructions, thisInit ? OP_put_var_ref_check_init : safe ? OP_put_var_ref
-                                                                              : OP_put_var_ref_check,
-               refIdx);
+      int refIDX = getFlagNumber(loc, "REFIDX");
+
+      // === SPECIALIZATION ===
+      if (thisInit)
+        return pushOP16(ctx, instructions, OP_put_var_ref_check_init, refIDX);
+
+      if (!safe)
+        return pushOP16(ctx, instructions, OP_put_var_ref_check, refIDX);
+      
+      switch (refIDX)
+      {
+      case 0:
+        return pushOP(ctx, instructions, OP_put_var_ref0);
+        break;
+      case 1:
+        return pushOP(ctx, instructions, OP_put_var_ref1);
+        break;
+      case 2:
+        return pushOP(ctx, instructions, OP_put_var_ref2);
+        break;
+      case 3:
+        return pushOP(ctx, instructions, OP_put_var_ref3);
+        break;
+      }
+
+      return pushOP16(ctx, instructions, OP_put_var_ref, refIDX);
     }
     else if (isTag(loc, "EnvBinding"))
     {
@@ -964,6 +986,9 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
 
       if (val >= INT16_MIN && val <= INT16_MAX)
         return pushOP16(ctx, instructions, OP_push_i16, (int16_t)val);
+
+      if (val >= INT32_MIN && val <= INT32_MAX)
+        return pushOP32(ctx, instructions, OP_push_i32, (int32_t)val);
     }
 
     // Fallback
@@ -977,7 +1002,27 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   else if (isTag(rval, "RemoteEnvBinding"))
   {
     int refIDX = getFlagNumber(rval, "REFIDX");
-    return pushOP16(ctx, instructions, OP_get_var_ref_check, refIDX);
+
+    // === SPECIALIZATION ===
+    if (!safeRead)
+      return pushOP16(ctx, instructions, OP_get_var_ref_check, refIDX);
+    switch (refIDX)
+    {
+    case 0:
+      return pushOP(ctx, instructions, OP_get_var_ref0);
+      break;
+    case 1:
+      return pushOP(ctx, instructions, OP_get_var_ref1);
+      break;
+    case 2:
+      return pushOP(ctx, instructions, OP_get_var_ref2);
+      break;
+    case 3:
+      return pushOP(ctx, instructions, OP_get_var_ref3);
+      break;
+    }
+
+    return pushOP16(ctx, instructions, OP_get_var_ref, refIDX);
   }
   else if (isTag(rval, "EnvBinding"))
   {
@@ -3193,24 +3238,24 @@ struct SnipSnap
       for (int i = 0; i < insts.size(); i++)
       { // snap
         auto &inst = insts[i];
-  
+
         if (inst->bc == OP_goto)
         {
           auto distance = inst->data.four;
-  
+
           if (distance >= INT8_MIN && distance <= INT8_MAX)
           {
             // Snip 3 Bytes
             int SNIP = 3;
-  
+
             inst->bc = OP_goto8;
             inst->valueSize = 1;
-  
+
             if (distance > 0)
               inst->data.one = distance - SNIP;
             else
               inst->data.one = distance;
-  
+
             snip(i, SNIP);
           }
           else if (distance >= INT16_MIN && distance <= INT16_MAX)
@@ -3219,12 +3264,12 @@ struct SnipSnap
             int SNIP = 2;
             inst->bc = OP_goto16;
             inst->valueSize = 2;
-  
+
             if (distance > 0)
               inst->data.two = distance - SNIP;
             else
               inst->data.two = distance;
-  
+
             snip(i, SNIP);
           }
         }
