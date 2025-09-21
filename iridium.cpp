@@ -348,9 +348,9 @@ typedef struct BCLList
   int label;
   union
   {
-    uint8_t one;
-    uint16_t two;
-    uint32_t four;
+    int8_t one;
+    int16_t two;
+    int32_t four;
   } data;
   uint8_t valueSize;
   bool hasFlags;
@@ -1136,7 +1136,6 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
         return pushOP16(ctx, instructions, OP_call, fArgs);
         break;
       }
-      
     }
   }
   else if (isTag(rval, "EnvRead"))
@@ -2307,7 +2306,7 @@ void populateLambdaPoolReferences(JSContext *ctx, vector<BCInstruction> &instruc
   }
 }
 
-int findOffset(vector<BCInstruction> &instructions, int targetOffset, std::unordered_map<uint32_t, size_t> & iriOffsetToStartInstMap)
+int findOffset(vector<BCInstruction> &instructions, int targetOffset, std::unordered_map<uint32_t, size_t> &iriOffsetToStartInstMap)
 {
   int offset = 0;
 
@@ -2325,7 +2324,7 @@ int findOffset(vector<BCInstruction> &instructions, int targetOffset, std::unord
   return offset;
 }
 
-void patchGotos(vector<BCInstruction> &instructions, std::unordered_map<uint32_t, size_t> & iriOffsetToStartInstMap)
+void patchGotos(vector<BCInstruction> &instructions, std::unordered_map<uint32_t, size_t> &iriOffsetToStartInstMap)
 {
   std::unordered_map<uint32_t, int> iriOffsetMap;
   int currOffset = 0;
@@ -2335,7 +2334,8 @@ void patchGotos(vector<BCInstruction> &instructions, std::unordered_map<uint32_t
     if (inst.bc == OP_goto || inst.bc == OP_catch || inst.bc == OP_gosub || inst.bc == OP_if_true || inst.bc == OP_if_false)
     {
       uint32_t iriOffset = inst.data.four;
-      if (iriOffsetMap.count(iriOffset) == 0) iriOffsetMap[iriOffset] = findOffset(instructions, iriOffset, iriOffsetToStartInstMap);
+      if (iriOffsetMap.count(iriOffset) == 0)
+        iriOffsetMap[iriOffset] = findOffset(instructions, iriOffset, iriOffsetToStartInstMap);
       int actualOffset = iriOffsetMap[iriOffset];
       inst.data.four = actualOffset - currOffset - 1;
       // fprintf(stdout, "Patching offset %d to %d : %d -- %d\n", iriOffset, actualOffset, currOffset, inst.data.four);
@@ -3021,6 +3021,250 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCI
   return func_val;
 }
 
+struct SnipSnap
+{
+  std::vector<BCInstruction *> insts;
+  std::unordered_map<BCInstruction *, int> bcOffsets;
+
+  bool snipped;
+
+  SnipSnap(std::vector<BCInstruction> &instructions) : snipped(true)
+  {
+    int offset = 0;
+    for (size_t i = 0; i < instructions.size(); i++)
+    {
+      auto &inst = instructions.at(i);
+      if (inst.bc == OP_goto || inst.bc == OP_catch || inst.bc == OP_gosub || inst.bc == OP_if_true || inst.bc == OP_if_false)
+      {
+        insts.push_back(&inst);
+        bcOffsets[&inst] = offset;
+      }
+      offset += short_opcode_info(instructions.at(i).bc).size;
+    }
+  }
+
+  void printBCInst(BCInstruction *inst)
+  {
+    std::cout << "  [" << bcOffsets[inst] << "] ";
+    if (inst->bc == OP_goto)
+      std::cout << "OP_goto (" << (int)inst->data.four << ")";
+    if (inst->bc == OP_goto8)
+      std::cout << "OP_goto8 (" << (int)inst->data.one << ")";
+    if (inst->bc == OP_goto16)
+      std::cout << "OP_goto16 (" << (int)inst->data.two << ")";
+    if (inst->bc == OP_catch)
+      std::cout << "OP_catch (" << (int)inst->data.four << ")";
+    if (inst->bc == OP_gosub)
+      std::cout << "OP_gosub (" << (int)inst->data.four << ")";
+    if (inst->bc == OP_if_true)
+      std::cout << "OP_if_true (" << (int)inst->data.four << ")";
+    if (inst->bc == OP_if_false)
+      std::cout << "OP_if_false (" << (int)inst->data.four << ")";
+    if (inst->bc == OP_if_true8)
+      std::cout << "OP_if_true8 (" << (int)inst->data.one << ")";
+    if (inst->bc == OP_if_false8)
+      std::cout << "OP_if_false8 (" << (int)inst->data.one << ")";
+    std::cout << std::endl;
+  }
+
+  void snip(int idx, int snipSize)
+  {
+    snipped = true;
+    BCInstruction *snippedInst = insts[idx];
+    int snipBCOffset = bcOffsets[snippedInst];
+    // std::cout << "SNIP(" << snipSize << "): ";
+    // printBCInst(snippedInst);
+
+    // std::cout << "BEFORE SNIP:" << std::endl;
+    // for (int i = 0; i < insts.size(); i++)
+    // {
+    //   BCInstruction *iii = insts[i];
+    //   printBCInst(iii);
+    // }
+
+    // Decrement bcOffset of Insts that come after the SNIP
+    for (int i = idx + 1; i < insts.size(); i++)
+    {
+      BCInstruction *iii = insts[i];
+      bcOffsets[iii] = bcOffsets[iii] - snipSize;
+    }
+
+    // std::cout << "AFTER OFFSET ADJ:" << std::endl;
+    // for (int i = 0; i < insts.size(); i++)
+    // {
+    //   BCInstruction *iii = insts[i];
+    //   printBCInst(iii);
+    // }
+
+    // Algo,... Probably there are better ways to express this.. im sure
+    for (int i = 0; i < insts.size(); i++)
+    {
+      if (i == idx)
+        continue;
+
+      BCInstruction *iii = insts[i];
+
+      int32_t target = bcOffsets[iii];
+
+      if (iii->valueSize == 1)
+      {
+        target += iii->data.one;
+      }
+      else if (iii->valueSize == 2)
+      {
+        target += iii->data.two;
+      }
+      else if (iii->valueSize == 4)
+      {
+        target += iii->data.four;
+      }
+      else
+        assert(false && "Expected data at jump insts");
+
+      if (i > idx)
+      {
+        if (target < snipBCOffset)
+        {
+          if (iii->valueSize == 1)
+          {
+            if (iii->data.one > 0)
+              iii->data.one -= snipSize;
+            else
+              iii->data.one += snipSize;
+          }
+          else if (iii->valueSize == 2)
+          {
+            if (iii->data.two > 0)
+              iii->data.two -= snipSize;
+            else
+              iii->data.two += snipSize;
+          }
+          else if (iii->valueSize == 4)
+          {
+            if (iii->data.four > 0)
+              iii->data.four -= snipSize;
+            else
+              iii->data.four += snipSize;
+          }
+        }
+      }
+      else
+      {
+        if (target > snipBCOffset)
+        {
+          if (iii->valueSize == 1)
+          {
+            if (iii->data.one > 0)
+              iii->data.one -= snipSize;
+            else
+              iii->data.one += snipSize;
+          }
+          else if (iii->valueSize == 2)
+          {
+            if (iii->data.two > 0)
+              iii->data.two -= snipSize;
+            else
+              iii->data.two += snipSize;
+          }
+          else if (iii->valueSize == 4)
+          {
+            if (iii->data.four > 0)
+              iii->data.four -= snipSize;
+            else
+              iii->data.four += snipSize;
+          }
+        }
+      }
+    }
+
+    // std::cout << "AFTER SNIP:" << std::endl;
+    // for (int i = 0; i < insts.size(); i++)
+    // {
+    //   BCInstruction *iii = insts[i];
+    //   printBCInst(iii);
+    // }
+  }
+
+  void execute()
+  {
+    while (snipped == true)
+    {
+      snipped = false;
+      for (int i = 0; i < insts.size(); i++)
+      { // snap
+        auto &inst = insts[i];
+  
+        if (inst->bc == OP_goto)
+        {
+          auto distance = inst->data.four;
+  
+          if (distance >= INT8_MIN && distance <= INT8_MAX)
+          {
+            // Snip 3 Bytes
+            int SNIP = 3;
+  
+            inst->bc = OP_goto8;
+            inst->valueSize = 1;
+  
+            if (distance > 0)
+              inst->data.one = distance - SNIP;
+            else
+              inst->data.one = distance;
+  
+            snip(i, SNIP);
+          }
+          else if (distance >= INT16_MIN && distance <= INT16_MAX)
+          {
+            // Snip 2 Bytes
+            int SNIP = 2;
+            inst->bc = OP_goto16;
+            inst->valueSize = 2;
+  
+            if (distance > 0)
+              inst->data.two = distance - SNIP;
+            else
+              inst->data.two = distance;
+  
+            snip(i, SNIP);
+          }
+        }
+        else if (inst->bc == OP_if_true || inst->bc == OP_if_false)
+        {
+          auto distance = inst->data.four;
+          if (distance >= INT8_MIN && distance <= INT8_MAX)
+          {
+            // Snip 3 Bytes
+            int SNIP = 3;
+            inst->bc = inst->bc == OP_if_true ? OP_if_true8 : OP_if_false8;
+            inst->valueSize = 1;
+            if (distance > 0)
+              inst->data.one = distance - SNIP;
+            else
+              inst->data.one = distance;
+            snip(i, SNIP);
+          }
+        }
+        else if (inst->bc == OP_goto16)
+        {
+          auto distance = inst->data.two;
+          if (distance >= INT8_MIN && distance <= INT8_MAX)
+          {
+            // Snip 1 Byte
+            int SNIP = 1;
+            inst->bc = OP_goto8;
+            inst->valueSize = 1;
+            if (distance > 0)
+              inst->data.one = distance - SNIP;
+            else
+              inst->data.one = distance;
+            snip(i, SNIP);
+          }
+        }
+      }
+    }
+  }
+};
+
 // Modified generateBytecode function with optimizations
 JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 {
@@ -3051,29 +3295,18 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 
     vector<BCInstruction> instructions;
 
-    // // Add dummy first instruction
-    // BCInstruction inst;
-    // inst.bc = 0;
-    // inst.hasPoolData = false;
-    // inst.poolData = JS_UNINITIALIZED;
-    // inst.data.four = 0;
-    // inst.valueSize = 0;
-    // // inst.isLabel = false;
-    // // inst.label = 0;
-    // instructions.push_back(inst);
-
     // Generate initial bytecode
     IridiumSEXP *bbList = bbContainer->args[1];
 
     std::unordered_map<uint32_t, size_t> iriOffsetToStartInstMap;
-    
+
     for (int idx = 0; idx < bbList->numArgs; idx++)
     {
       IridiumSEXP *bb = bbList->args[idx];
       ensureTag(bb, "BB");
 
       iriOffsetToStartInstMap[getFlagNumber(bb, "IDX")] = instructions.size();
-      
+
       for (int stmtIDX = 0; stmtIDX < bb->numArgs; stmtIDX++)
       {
         IridiumSEXP *currStmt = bb->args[stmtIDX];
@@ -3083,6 +3316,9 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 
     // Apply optimizations in sequence
     patchGotos(instructions, iriOffsetToStartInstMap);
+
+    SnipSnap snipSnap(instructions);
+    snipSnap.execute();
 
     // Generate the function with optimized instructions
     JSValue res = generateQjsFunction(ctx, bbContainer, instructions);
