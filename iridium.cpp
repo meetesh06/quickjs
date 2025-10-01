@@ -701,7 +701,7 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
 
       if (!safe)
         return pushOP16(ctx, instructions, OP_put_var_ref_check, refIDX);
-      
+
       switch (refIDX)
       {
       case 0:
@@ -895,7 +895,28 @@ void keepNDropM(JSContext *ctx, vector<BCInstruction> &instructions, int N, int 
   return;
 }
 
-void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool safeRead = false)
+void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool safeRead = false);
+
+void handleFieldRead(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool retainContext = false)
+{
+  IridiumSEXP *receiver = rval->args[0];
+  lowerToStack(ctx, instructions, receiver);
+  IridiumSEXP *field = rval->args[1];
+  ensureTag(field, "String");
+  JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+  pushOP32(ctx, instructions, retainContext ? OP_get_field2 : OP_get_field, fieldAtom);
+}
+
+void handleComputedFieldRead(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool retainContext = false)
+{
+  IridiumSEXP *receiver = rval->args[0];
+  lowerToStack(ctx, instructions, receiver);
+  IridiumSEXP *field = rval->args[1];
+  lowerToStack(ctx, instructions, field);
+  return pushOP(ctx, instructions, retainContext ? OP_get_array_el2 : OP_get_array_el);
+}
+
+void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool safeRead)
 {
   if (isTag(rval, "JSForInStart"))
   {
@@ -1124,6 +1145,96 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       pushOP(ctx, instructions, OP_dup);
       lowerToStack(ctx, instructions, rval->args[1]);
       i = 2;
+    }
+
+    // Peephole optimization for fields of call statements...
+    if (hasFlag(rval, "CCall"))
+    {
+      // If the context object and the receiver object are the same, we can simply ignore the first argument and retain the context upon field lookup
+      auto contextObj = rval->args[0];
+      auto lookup = rval->args[1];
+
+      if (isTag(lookup, "FieldRead") || isTag(lookup, "JSComputedFieldRead"))
+      {
+        auto receiver = lookup->args[0];
+        if (isTag(receiver, "GlobalBinding"))
+        {
+          if (isTag(contextObj, "EnvRead"))
+          {
+            auto bindingReadByContextObj = contextObj->args[0];
+            if (isTag(bindingReadByContextObj, "GlobalBinding"))
+            {
+              if (strcmp(getFlagString(receiver, "NAME"), getFlagString(bindingReadByContextObj, "NAME")) == 0)
+              {
+                // handleFieldRead(ctx, instructions, lookup, true);
+                if (isTag(lookup, "FieldRead"))
+                {
+                  handleFieldRead(ctx, instructions, lookup, true);
+                }
+                else if (isTag(lookup, "JSComputedFieldRead"))
+                {
+                  handleComputedFieldRead(ctx, instructions, lookup, true);
+                }
+                i = 2;
+              }
+            }
+          }
+        }
+        else if (isTag(receiver, "EnvBinding"))
+        {
+          int receiverIDX = getFlagNumber(receiver, "REFIDX");
+          if (isTag(contextObj, "EnvRead"))
+          {
+            auto bindingReadByContextObj = contextObj->args[0];
+            if (isTag(bindingReadByContextObj, "EnvBinding"))
+            {
+              int contextIDX = getFlagNumber(bindingReadByContextObj, "REFIDX");
+              if (receiverIDX == contextIDX)
+              {
+                // handleFieldRead(ctx, instructions, lookup, true);
+                if (isTag(lookup, "FieldRead"))
+                {
+                  handleFieldRead(ctx, instructions, lookup, true);
+                }
+                else if (isTag(lookup, "JSComputedFieldRead"))
+                {
+                  handleComputedFieldRead(ctx, instructions, lookup, true);
+                }
+                i = 2;
+              }
+            }
+          }
+        }
+        else if (isTag(receiver, "RemoteEnvBinding"))
+        {
+          int receiverIDX = getFlagNumber(receiver, "REFIDX");
+          if (isTag(contextObj, "EnvRead"))
+          {
+            auto bindingReadByContextObj = contextObj->args[0];
+            if (isTag(bindingReadByContextObj, "RemoteEnvBinding"))
+            {
+              int contextIDX = getFlagNumber(bindingReadByContextObj, "REFIDX");
+              if (receiverIDX == contextIDX)
+              {
+                // handleFieldRead(ctx, instructions, lookup, true);
+                if (isTag(lookup, "FieldRead"))
+                {
+                  handleFieldRead(ctx, instructions, lookup, true);
+                }
+                else if (isTag(lookup, "JSComputedFieldRead"))
+                {
+                  handleComputedFieldRead(ctx, instructions, lookup, true);
+                }
+                i = 2;
+              }
+            }
+          }
+        }
+      }
+      else
+      {
+        // Todo handle more cases
+      }
     }
 
     // Lower Arguments
@@ -1459,20 +1570,11 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "FieldRead"))
   {
-    IridiumSEXP *receiver = rval->args[0];
-    lowerToStack(ctx, instructions, receiver);
-    IridiumSEXP *field = rval->args[1];
-    ensureTag(field, "String");
-    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    return pushOP32(ctx, instructions, OP_get_field, fieldAtom);
+    return handleFieldRead(ctx, instructions, rval, false);
   }
   else if (isTag(rval, "JSComputedFieldRead"))
   {
-    IridiumSEXP *receiver = rval->args[0];
-    lowerToStack(ctx, instructions, receiver);
-    IridiumSEXP *field = rval->args[1];
-    lowerToStack(ctx, instructions, field);
-    return pushOP(ctx, instructions, OP_get_array_el);
+    return handleComputedFieldRead(ctx, instructions, rval, false);
   }
   else if (isTag(rval, "JSObjectProp"))
   {
