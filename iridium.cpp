@@ -1156,76 +1156,79 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
 
       if (isTag(lookup, "FieldRead") || isTag(lookup, "JSComputedFieldRead"))
       {
-        auto receiver = lookup->args[0];
-        if (isTag(receiver, "GlobalBinding"))
+        if (isTag(lookup->args[0], "EnvRead"))
         {
-          if (isTag(contextObj, "EnvRead"))
+          auto receiver = lookup->args[0]->args[0];
+          if (isTag(receiver, "GlobalBinding"))
           {
-            auto bindingReadByContextObj = contextObj->args[0];
-            if (isTag(bindingReadByContextObj, "GlobalBinding"))
+            if (isTag(contextObj, "EnvRead"))
             {
-              if (strcmp(getFlagString(receiver, "NAME"), getFlagString(bindingReadByContextObj, "NAME")) == 0)
+              auto bindingReadByContextObj = contextObj->args[0];
+              if (isTag(bindingReadByContextObj, "GlobalBinding"))
               {
-                // handleFieldRead(ctx, instructions, lookup, true);
-                if (isTag(lookup, "FieldRead"))
+                if (strcmp(getFlagString(receiver, "NAME"), getFlagString(bindingReadByContextObj, "NAME")) == 0)
                 {
-                  handleFieldRead(ctx, instructions, lookup, true);
+                  // handleFieldRead(ctx, instructions, lookup, true);
+                  if (isTag(lookup, "FieldRead"))
+                  {
+                    handleFieldRead(ctx, instructions, lookup, true);
+                  }
+                  else if (isTag(lookup, "JSComputedFieldRead"))
+                  {
+                    handleComputedFieldRead(ctx, instructions, lookup, true);
+                  }
+                  i = 2;
                 }
-                else if (isTag(lookup, "JSComputedFieldRead"))
-                {
-                  handleComputedFieldRead(ctx, instructions, lookup, true);
-                }
-                i = 2;
               }
             }
           }
-        }
-        else if (isTag(receiver, "EnvBinding"))
-        {
-          int receiverIDX = getFlagNumber(receiver, "REFIDX");
-          if (isTag(contextObj, "EnvRead"))
+          else if (isTag(receiver, "EnvBinding"))
           {
-            auto bindingReadByContextObj = contextObj->args[0];
-            if (isTag(bindingReadByContextObj, "EnvBinding"))
+            int receiverIDX = getFlagNumber(receiver, "REFIDX");
+            if (isTag(contextObj, "EnvRead"))
             {
-              int contextIDX = getFlagNumber(bindingReadByContextObj, "REFIDX");
-              if (receiverIDX == contextIDX)
+              auto bindingReadByContextObj = contextObj->args[0];
+              if (isTag(bindingReadByContextObj, "EnvBinding"))
               {
-                // handleFieldRead(ctx, instructions, lookup, true);
-                if (isTag(lookup, "FieldRead"))
+                int contextIDX = getFlagNumber(bindingReadByContextObj, "REFIDX");
+                if (receiverIDX == contextIDX)
                 {
-                  handleFieldRead(ctx, instructions, lookup, true);
+                  // handleFieldRead(ctx, instructions, lookup, true);
+                  if (isTag(lookup, "FieldRead"))
+                  {
+                    handleFieldRead(ctx, instructions, lookup, true);
+                  }
+                  else if (isTag(lookup, "JSComputedFieldRead"))
+                  {
+                    handleComputedFieldRead(ctx, instructions, lookup, true);
+                  }
+                  i = 2;
                 }
-                else if (isTag(lookup, "JSComputedFieldRead"))
-                {
-                  handleComputedFieldRead(ctx, instructions, lookup, true);
-                }
-                i = 2;
               }
             }
           }
-        }
-        else if (isTag(receiver, "RemoteEnvBinding"))
-        {
-          int receiverIDX = getFlagNumber(receiver, "REFIDX");
-          if (isTag(contextObj, "EnvRead"))
+          else if (isTag(receiver, "RemoteEnvBinding"))
           {
-            auto bindingReadByContextObj = contextObj->args[0];
-            if (isTag(bindingReadByContextObj, "RemoteEnvBinding"))
+            int receiverIDX = getFlagNumber(receiver, "REFIDX");
+            if (isTag(contextObj, "EnvRead"))
             {
-              int contextIDX = getFlagNumber(bindingReadByContextObj, "REFIDX");
-              if (receiverIDX == contextIDX)
+              auto bindingReadByContextObj = contextObj->args[0];
+              if (isTag(bindingReadByContextObj, "RemoteEnvBinding"))
               {
-                // handleFieldRead(ctx, instructions, lookup, true);
-                if (isTag(lookup, "FieldRead"))
+                int contextIDX = getFlagNumber(bindingReadByContextObj, "REFIDX");
+                if (receiverIDX == contextIDX)
                 {
-                  handleFieldRead(ctx, instructions, lookup, true);
+                  // handleFieldRead(ctx, instructions, lookup, true);
+                  if (isTag(lookup, "FieldRead"))
+                  {
+                    handleFieldRead(ctx, instructions, lookup, true);
+                  }
+                  else if (isTag(lookup, "JSComputedFieldRead"))
+                  {
+                    handleComputedFieldRead(ctx, instructions, lookup, true);
+                  }
+                  i = 2;
                 }
-                else if (isTag(lookup, "JSComputedFieldRead"))
-                {
-                  handleComputedFieldRead(ctx, instructions, lookup, true);
-                }
-                i = 2;
               }
             }
           }
@@ -1236,6 +1239,8 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
         // Todo handle more cases
       }
     }
+
+    bool isTailCall = hasFlag(rval, "TAILCALL");
 
     // Lower Arguments
     for (; i < rval->numArgs; i++)
@@ -1265,15 +1270,18 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     }
     else if (hasFlag(rval, "CCall"))
     {
+      if (isTailCall) return pushOP16(ctx, instructions, OP_tail_call_method, rval->numArgs - 2);
       return pushOP16(ctx, instructions, OP_call_method, rval->numArgs - 2);
     }
     else if (hasFlag(rval, "PrivateCall"))
     {
+      if (isTailCall) return pushOP16(ctx, instructions, OP_tail_call_method, rval->numArgs - 2);
       return pushOP16(ctx, instructions, OP_call_method, rval->numArgs - 2);
     }
     else
     {
       auto fArgs = rval->numArgs - 1;
+      if (isTailCall) return pushOP16(ctx, instructions, OP_tail_call, fArgs);
       switch (fArgs)
       {
       case 0:
