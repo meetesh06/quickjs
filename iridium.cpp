@@ -1270,18 +1270,21 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     }
     else if (hasFlag(rval, "CCall"))
     {
-      if (isTailCall) return pushOP16(ctx, instructions, OP_tail_call_method, rval->numArgs - 2);
+      if (isTailCall)
+        return pushOP16(ctx, instructions, OP_tail_call_method, rval->numArgs - 2);
       return pushOP16(ctx, instructions, OP_call_method, rval->numArgs - 2);
     }
     else if (hasFlag(rval, "PrivateCall"))
     {
-      if (isTailCall) return pushOP16(ctx, instructions, OP_tail_call_method, rval->numArgs - 2);
+      if (isTailCall)
+        return pushOP16(ctx, instructions, OP_tail_call_method, rval->numArgs - 2);
       return pushOP16(ctx, instructions, OP_call_method, rval->numArgs - 2);
     }
     else
     {
       auto fArgs = rval->numArgs - 1;
-      if (isTailCall) return pushOP16(ctx, instructions, OP_tail_call, fArgs);
+      if (isTailCall)
+        return pushOP16(ctx, instructions, OP_tail_call, fArgs);
       switch (fArgs)
       {
       case 0:
@@ -1583,6 +1586,78 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   else if (isTag(rval, "JSComputedFieldRead"))
   {
     return handleComputedFieldRead(ctx, instructions, rval, false);
+  }
+  else if (isTag(rval, "IDOP"))
+  {
+    bool isPrefix = getFlagBoolean(rval, "PREFIX");
+    bool isIncrement = getFlagBoolean(rval, "INCREMENT");
+
+    // Read field
+    IridiumSEXP *fieldRead = rval->args[0];
+    assert(isTag(fieldRead, "FieldRead"));
+    IridiumSEXP *field = fieldRead->args[1];
+    ensureTag(field, "String");
+    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+
+    handleFieldRead(ctx, instructions, fieldRead, true);
+    // obj obj.field
+
+    if (isPrefix)
+    {
+      // Pre increment
+      // obj oldVal
+      pushOP(ctx, instructions, isIncrement ? OP_inc : OP_dec);
+      // obj newVal
+      pushOP(ctx, instructions, OP_insert2);
+      // newVal obj newVal -- same as dup_x1 in Java bytecode
+      pushOP32(ctx, instructions, OP_put_field, fieldAtom);
+      // newVal
+    }
+    else
+    {
+      // Post increment
+      // obj oldVal
+      pushOP(ctx, instructions, isIncrement ? OP_post_inc : OP_post_dec);
+      // obj oldVal newVal
+      pushOP(ctx, instructions, OP_perm3);
+      // oldVal obj newVal
+      pushOP32(ctx, instructions, OP_put_field, fieldAtom);
+      // oldVal
+    }
+  }
+    else if (isTag(rval, "JSIDOP"))
+  {
+    bool isPrefix = getFlagBoolean(rval, "PREFIX");
+    bool isIncrement = getFlagBoolean(rval, "INCREMENT");
+
+    // Read field
+    IridiumSEXP *computedFieldRead = rval->args[0];
+    assert(isTag(computedFieldRead, "JSComputedFieldRead"));
+    IridiumSEXP *receiver = computedFieldRead->args[0];
+    lowerToStack(ctx, instructions, receiver);
+    IridiumSEXP *field = computedFieldRead->args[1];
+    lowerToStack(ctx, instructions, field);
+
+    if (isPrefix)
+    {
+      pushOP(ctx, instructions, OP_to_propkey2);
+      pushOP(ctx, instructions, OP_dup2);
+      pushOP(ctx, instructions, OP_get_array_el);
+      pushOP(ctx, instructions, isIncrement ? OP_inc : OP_dec);
+      pushOP(ctx, instructions, OP_insert3);
+      pushOP(ctx, instructions, OP_put_array_el);
+    }
+    else
+    {
+      pushOP(ctx, instructions, OP_to_propkey2);
+      pushOP(ctx, instructions, OP_dup2);
+      pushOP(ctx, instructions, OP_get_array_el);
+      pushOP(ctx, instructions, isIncrement ? OP_post_inc : OP_post_dec);
+      pushOP(ctx, instructions, OP_perm4);
+      pushOP(ctx, instructions, OP_put_array_el);
+    }
+    
+
   }
   else if (isTag(rval, "JSObjectProp"))
   {
@@ -2106,6 +2181,50 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   }
   else if (isTag(currStmt, "StackReject"))
   {
+    if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "IDOP"))
+    {
+      auto rval = currStmt->args[0];
+      bool isIncrement = getFlagBoolean(rval, "INCREMENT");
+
+      // Read field
+      IridiumSEXP *fieldRead = rval->args[0];
+      assert(isTag(fieldRead, "FieldRead"));
+      IridiumSEXP *field = fieldRead->args[1];
+      ensureTag(field, "String");
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+
+      handleFieldRead(ctx, instructions, fieldRead, true);
+      // obj obj.field
+
+      // obj oldVal
+      pushOP(ctx, instructions, isIncrement ? OP_inc : OP_dec);
+      // obj newVal
+      pushOP32(ctx, instructions, OP_put_field, fieldAtom);
+      // {EMPTY STACK}
+
+      return;
+    }
+    if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "JSIDOP"))
+    {
+      auto rval = currStmt->args[0];
+      bool isIncrement = getFlagBoolean(rval, "INCREMENT");
+
+      // Read field
+      IridiumSEXP *computedFieldRead = rval->args[0];
+      assert(isTag(computedFieldRead, "JSComputedFieldRead"));
+      IridiumSEXP *receiver = computedFieldRead->args[0];
+      lowerToStack(ctx, instructions, receiver);
+      IridiumSEXP *field = computedFieldRead->args[1];
+      lowerToStack(ctx, instructions, field);
+      
+      pushOP(ctx, instructions, OP_to_propkey2);
+      pushOP(ctx, instructions, OP_dup2);
+      pushOP(ctx, instructions, OP_get_array_el);
+      pushOP(ctx, instructions, isIncrement ? OP_inc : OP_dec);
+      pushOP(ctx, instructions, OP_put_array_el);
+
+      return;
+    }
     if (currStmt->numArgs > 0)
     {
       for (int i = 0; i < currStmt->numArgs; i++)
