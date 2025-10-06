@@ -992,6 +992,11 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   if (isTag(rval, "String"))
   {
     char *data = getFlagString(rval, "IridiumPrimitive");
+
+    // SPECIALIZATION
+    if (std::string(data) == "")
+      return pushOP(ctx, instructions, OP_push_empty_string);
+
     JSAtom strAtom = JS_NewAtom(ctx, data);
     return pushOP32(ctx, instructions, OP_push_atom_value, strAtom);
   }
@@ -2225,6 +2230,169 @@ void handleEnvWrite(JSContext *ctx, vector<BCInstruction> &instructions, Iridium
   return storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, saveResToStack);
 }
 
+void peepholeOptimizeStackOPS(std::vector<BCInstruction> &instructions, std::unordered_map<uint32_t, size_t> &iriOffsetToStartInstMap)
+{
+  for (size_t i = 0; i + 1 < instructions.size();)
+  {
+    auto &curr = instructions[i];
+    auto &next = instructions[i + 1];
+
+    // Safety Check
+    bool safe = true;
+    for (auto & e : iriOffsetToStartInstMap)
+    {
+      if (i + 1 == e.second) 
+      {
+        safe = false;
+        break;
+      }
+    }
+
+    if (!safe)
+    {
+      ++i;
+      continue;
+    }
+
+    // -------------------------------
+    // Case 1: get_loc_0 + get_loc_1 → get_loc0_loc1
+    // -------------------------------
+    if (curr.bc == OP_get_loc0 && next.bc == OP_get_loc1)
+    {
+
+      curr.bc = OP_get_loc0_loc1;
+
+      // curr.bc = OP_get_loc0_loc1;
+      instructions.erase(instructions.begin() + i + 1);
+
+      for (auto e : iriOffsetToStartInstMap)
+      {
+        if (e.second > i)
+        {
+          iriOffsetToStartInstMap[e.first]--;
+        }
+      }
+
+      continue;
+    }
+
+    // -------------------------------
+    // Case 2: put_locX + get_locX → set_locX
+    // -------------------------------
+    if (
+        (curr.bc == OP_put_loc0 && next.bc == OP_get_loc0) ||
+        (curr.bc == OP_put_loc1 && next.bc == OP_get_loc1) ||
+        (curr.bc == OP_put_loc2 && next.bc == OP_get_loc2) ||
+        (curr.bc == OP_put_loc3 && next.bc == OP_get_loc3))
+    {
+      switch (curr.bc)
+      {
+      case OP_put_loc0:
+        curr.bc = OP_set_loc0;
+        break;
+      case OP_put_loc1:
+        curr.bc = OP_set_loc1;
+        break;
+      case OP_put_loc2:
+        curr.bc = OP_set_loc2;
+        break;
+      case OP_put_loc3:
+        curr.bc = OP_set_loc3;
+        break;
+      default:
+        break;
+      }
+      instructions.erase(instructions.begin() + i + 1);
+
+      for (auto e : iriOffsetToStartInstMap)
+      {
+        if (e.second > i)
+        {
+          iriOffsetToStartInstMap[e.first]--;
+        }
+      }
+      continue;
+    }
+
+    // -------------------------------
+    // Case 3: put_argX + get_argX → set_argX
+    // -------------------------------
+    if (
+        (curr.bc == OP_put_arg0 && next.bc == OP_get_arg0) ||
+        (curr.bc == OP_put_arg1 && next.bc == OP_get_arg1) ||
+        (curr.bc == OP_put_arg2 && next.bc == OP_get_arg2) ||
+        (curr.bc == OP_put_arg3 && next.bc == OP_get_arg3))
+    {
+      switch (curr.bc)
+      {
+      case OP_put_arg0:
+        curr.bc = OP_set_arg0;
+        break;
+      case OP_put_arg1:
+        curr.bc = OP_set_arg1;
+        break;
+      case OP_put_arg2:
+        curr.bc = OP_set_arg2;
+        break;
+      case OP_put_arg3:
+        curr.bc = OP_set_arg3;
+        break;
+      default:
+        break;
+      }
+      instructions.erase(instructions.begin() + i + 1);
+
+      for (auto e : iriOffsetToStartInstMap)
+      {
+        if (e.second > i)
+        {
+          iriOffsetToStartInstMap[e.first]--;
+        }
+      }
+      continue;
+    }
+
+    // -------------------------------
+    // Case 4: put_var_refX + get_var_refX → set_var_refX
+    // -------------------------------
+    if (
+        (curr.bc == OP_put_var_ref0 && next.bc == OP_get_var_ref0) ||
+        (curr.bc == OP_put_var_ref1 && next.bc == OP_get_var_ref1) ||
+        (curr.bc == OP_put_var_ref2 && next.bc == OP_get_var_ref2) ||
+        (curr.bc == OP_put_var_ref3 && next.bc == OP_get_var_ref3))
+    {
+      switch (curr.bc)
+      {
+      case OP_put_var_ref0:
+        curr.bc = OP_set_var_ref0;
+        break;
+      case OP_put_var_ref1:
+        curr.bc = OP_set_var_ref1;
+        break;
+      case OP_put_var_ref2:
+        curr.bc = OP_set_var_ref2;
+        break;
+      case OP_put_var_ref3:
+        curr.bc = OP_set_var_ref3;
+        break;
+      default:
+        break;
+      }
+      instructions.erase(instructions.begin() + i + 1);
+      for (auto e : iriOffsetToStartInstMap)
+      {
+        if (e.second > i)
+        {
+          iriOffsetToStartInstMap[e.first]--;
+        }
+      }
+      continue;
+    }
+
+    ++i;
+  }
+}
+
 void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *currStmt)
 {
   // printf("stmt_type=%s\n",currStmt->tag);
@@ -2265,7 +2433,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
       handleFieldWrite(ctx, instructions, currStmt->args[0], false);
       return;
     }
-
 
     if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "JSComputedFieldWrite"))
     {
@@ -2324,7 +2491,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
 
         return;
       }
-      
+
       // Default case
       assert(isTag(computedFieldRead, "JSComputedFieldRead"));
       IridiumSEXP *receiver = computedFieldRead->args[0];
@@ -3095,7 +3262,6 @@ void dumpBCLList(JSContext *ctx, vector<BCInstruction> &instructions)
   for (auto &inst : instructions)
   {
     fprintf(stdout, "BC[%d]: %s (size = %d bytes)", i, short_opcode_info(inst.bc).name, short_opcode_info(inst.bc).size);
-    assert(short_opcode_info(inst.bc).size == (inst.valueSize + 1));
 
     if (inst.bc == OP_push_const)
     {
@@ -3703,7 +3869,16 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       }
     }
 
-    // Apply optimizations in sequence
+    // // Apply optimizations in sequence
+    // std::cout << "Before Peephole";
+    // dumpBCLList(ctx, instructions);
+
+    peepholeOptimizeStackOPS(instructions, iriOffsetToStartInstMap);
+
+    // std::cout << "After Peephole";
+    // dumpBCLList(ctx, instructions);
+
+    // Snip Snap
     patchGotos(instructions, iriOffsetToStartInstMap);
 
     SnipSnap snipSnap(instructions);
@@ -3776,14 +3951,14 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   {
     if (i == topLevelModuleIdx)
       continue;
-    #ifdef LINKING_DUMP_FUNCTION
+#ifdef LINKING_DUMP_FUNCTION
     JSValue funBC = moduleList[i];
     JSFunctionBytecode *b = (JSFunctionBytecode *)funBC.u.ptr;
     if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
     {
       js_dump_function_bytecode(ctx, b);
     }
-    #endif
+#endif
   }
 
   return moduleList[topLevelModuleIdx];
@@ -3823,12 +3998,12 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
   if (!isModule)
   {
-    #ifdef LINKING_DUMP_FUNCTION
+#ifdef LINKING_DUMP_FUNCTION
     if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
     {
       js_dump_function_bytecode(ctx, b);
     }
-    #endif
+#endif
     return ((IridiumLoadResult){false, b});
   }
 
@@ -3951,13 +4126,13 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     }
   }
 
-  #ifdef LINKING_DUMP_FUNCTION
+#ifdef LINKING_DUMP_FUNCTION
   if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
   {
     fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
     js_dump_function_bytecode(ctx, b);
   }
-  #endif
+#endif
 
   m->func_obj = moduleFunVal;
 
