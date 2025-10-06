@@ -19,6 +19,8 @@ extern "C"
 #include <chrono>
 #include <string>
 
+#define LINKING_DUMP_FUNCTION
+
 class ScopedTimer
 {
 public:
@@ -685,7 +687,7 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
 
         ensureTag(next, "EnvBinding");
 
-        if (hasFlag(next, "JSCONST"))
+        if (hasFlag(next, "JSCONST") && !thisInit)
         {
           pushOP(ctx, instructions, OP_drop);
           pushOP32Flags(ctx, instructions, OP_throw_error, JS_NewAtom(ctx, getFlagString(next, "NAME")), 0);
@@ -755,7 +757,7 @@ void storeWhatevesOnTheStack(JSContext *ctx, IridiumSEXP *loc, vector<BCInstruct
 
       if (!safe)
       {
-        if (hasFlag(loc, "JSCONST"))
+        if (hasFlag(loc, "JSCONST") && !thisInit)
         {
           pushOP(ctx, instructions, OP_drop);
           pushOP32Flags(ctx, instructions, OP_throw_error, JS_NewAtom(ctx, getFlagString(loc, "NAME")), 0);
@@ -903,8 +905,39 @@ void handleFieldRead(JSContext *ctx, vector<BCInstruction> &instructions, Iridiu
   lowerToStack(ctx, instructions, receiver);
   IridiumSEXP *field = rval->args[1];
   ensureTag(field, "String");
+  auto fieldNameString = getFlagString(field, "IridiumPrimitive");
+  if (!retainContext && std::string(fieldNameString) == "length")
+  {
+    pushOP(ctx, instructions, OP_get_length);
+  }
+  else
+  {
+    JSAtom fieldAtom = JS_NewAtom(ctx, fieldNameString);
+    pushOP32(ctx, instructions, retainContext ? OP_get_field2 : OP_get_field, fieldAtom);
+  }
+}
+
+void handleFieldWrite(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool retainContext = false)
+{
+  // Receiver
+  IridiumSEXP *receiver = rval->args[0];
+  lowerToStack(ctx, instructions, receiver);
+
+  // Rval
+  IridiumSEXP *valToPush = rval->args[2];
+  lowerToStack(ctx, instructions, valToPush);
+
+  if (retainContext)
+  {
+    // rcvr rval -> rval rcvr rval
+    pushOP(ctx, instructions, OP_insert2);
+  }
+
+  // Field
+  IridiumSEXP *field = rval->args[1];
+  ensureTag(field, "String");
   JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-  pushOP32(ctx, instructions, retainContext ? OP_get_field2 : OP_get_field, fieldAtom);
+  pushOP32(ctx, instructions, OP_put_field, fieldAtom);
 }
 
 void handleComputedFieldRead(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool retainContext = false)
@@ -914,6 +947,31 @@ void handleComputedFieldRead(JSContext *ctx, vector<BCInstruction> &instructions
   IridiumSEXP *field = rval->args[1];
   lowerToStack(ctx, instructions, field);
   return pushOP(ctx, instructions, retainContext ? OP_get_array_el2 : OP_get_array_el);
+}
+
+void handleComputedFieldWrite(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool retainContext = false)
+{
+  // Receiver
+  IridiumSEXP *receiver = rval->args[0];
+  lowerToStack(ctx, instructions, receiver);
+
+  // Field
+  IridiumSEXP *field = rval->args[1];
+  lowerToStack(ctx, instructions, field);
+  if (!hasFlag(rval, "SAFE"))
+    pushOP(ctx, instructions, OP_to_propkey);
+
+  // Rval
+  IridiumSEXP *assnVal = rval->args[2];
+  lowerToStack(ctx, instructions, assnVal);
+
+  if (retainContext)
+  {
+    // Receiver Field Rval -> Rval Receiver Field Rval
+    pushOP(ctx, instructions, OP_insert3);
+  }
+
+  pushOP(ctx, instructions, OP_put_array_el); // Receiver Field Rval
 }
 
 void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSEXP *rval, bool safeRead)
@@ -1625,7 +1683,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       // oldVal
     }
   }
-    else if (isTag(rval, "JSIDOP"))
+  else if (isTag(rval, "JSIDOP"))
   {
     bool isPrefix = getFlagBoolean(rval, "PREFIX");
     bool isIncrement = getFlagBoolean(rval, "INCREMENT");
@@ -1656,8 +1714,6 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       pushOP(ctx, instructions, OP_perm4);
       pushOP(ctx, instructions, OP_put_array_el);
     }
-    
-
   }
   else if (isTag(rval, "JSObjectProp"))
   {
@@ -1938,6 +1994,8 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     lowerToStack(ctx, instructions, rval->args[1]);
     lowerToStack(ctx, instructions, rval->args[2]);
     lowerToStack(ctx, instructions, rval->args[3]);
+    // this obj prop a -> a this obj prop a
+    pushOP(ctx, instructions, OP_insert4);
     return pushOP(ctx, instructions, OP_put_super_value);
   }
   else if (isTag(rval, "Null"))
@@ -1968,41 +2026,43 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "FieldWrite"))
   {
-    // Receiver
-    IridiumSEXP *receiver = rval->args[0];
-    lowerToStack(ctx, instructions, receiver);
+    // // Receiver
+    // IridiumSEXP *receiver = rval->args[0];
+    // lowerToStack(ctx, instructions, receiver);
 
-    // Rval
-    IridiumSEXP *valToPush = rval->args[2];
-    lowerToStack(ctx, instructions, valToPush);
-    pushOP(ctx, instructions, OP_dup);
-    pushOP(ctx, instructions, OP_rot3r);
+    // // Rval
+    // IridiumSEXP *valToPush = rval->args[2];
+    // lowerToStack(ctx, instructions, valToPush);
+    // pushOP(ctx, instructions, OP_dup);
+    // pushOP(ctx, instructions, OP_rot3r);
 
-    // Field
-    IridiumSEXP *field = rval->args[1];
-    ensureTag(field, "String");
-    JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
-    pushOP32(ctx, instructions, OP_put_field, fieldAtom);
+    // // Field
+    // IridiumSEXP *field = rval->args[1];
+    // ensureTag(field, "String");
+    // JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+    // pushOP32(ctx, instructions, OP_put_field, fieldAtom);
+    handleFieldWrite(ctx, instructions, rval, true);
   }
   else if (isTag(rval, "JSComputedFieldWrite"))
   {
-    // Receiver
-    IridiumSEXP *receiver = rval->args[0];
-    lowerToStack(ctx, instructions, receiver);
+    // // Receiver
+    // IridiumSEXP *receiver = rval->args[0];
+    // lowerToStack(ctx, instructions, receiver);
 
-    // Field
-    IridiumSEXP *field = rval->args[1];
-    lowerToStack(ctx, instructions, field);
-    pushOP(ctx, instructions, OP_to_propkey);
+    // // Field
+    // IridiumSEXP *field = rval->args[1];
+    // lowerToStack(ctx, instructions, field);
+    // pushOP(ctx, instructions, OP_to_propkey);
 
-    // Rval
-    IridiumSEXP *assnVal = rval->args[2];
-    lowerToStack(ctx, instructions, assnVal);
+    // // Rval
+    // IridiumSEXP *assnVal = rval->args[2];
+    // lowerToStack(ctx, instructions, assnVal);
 
-    // Receiver Field Rval -> Rval Receiver Field Rval
-    pushOP(ctx, instructions, OP_insert3);
+    // // Receiver Field Rval -> Rval Receiver Field Rval
+    // pushOP(ctx, instructions, OP_insert3);
 
-    pushOP(ctx, instructions, OP_put_array_el); // Receiver Field Rval
+    // pushOP(ctx, instructions, OP_put_array_el); // Receiver Field Rval
+    handleComputedFieldWrite(ctx, instructions, rval, true);
   }
   else if (isTag(rval, "JSADDBRAND"))
   {
@@ -2147,6 +2207,18 @@ void handleEnvWrite(JSContext *ctx, vector<BCInstruction> &instructions, Iridium
   IridiumSEXP *loc = currStmt->args[0];
   IridiumSEXP *rval = currStmt->args[1];
 
+  if (!saveResToStack)
+  {
+    if (isTag(loc, "EnvBinding") && isTag(rval, "JSNUBD"))
+    {
+      int refIdx = getFlagNumber(loc, "REFIDX");
+      if (!hasFlag(loc, "JSARG") && !hasFlag(loc, "JSRESTARG"))
+      {
+        return pushOP16(ctx, instructions, OP_set_loc_uninitialized, refIdx);
+      }
+    }
+  }
+
   // Store something on the stack
   lowerToStack(ctx, instructions, rval);
   // Store that something where its required
@@ -2162,8 +2234,9 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   }
   else if (isTag(currStmt, "FieldWrite") || isTag(currStmt, "JSComputedFieldWrite")) // Make fast cases for these too...
   {
-    lowerToStack(ctx, instructions, currStmt);
-    return pushOP(ctx, instructions, OP_drop);
+    throw std::runtime_error("Unexpected Field Write and JSComputedFieldWrite outside stack ops");
+    // lowerToStack(ctx, instructions, currStmt);
+    // return pushOP(ctx, instructions, OP_drop);
   }
   else if (isTag(currStmt, "StackRetain"))
   {
@@ -2181,6 +2254,25 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   }
   else if (isTag(currStmt, "StackReject"))
   {
+    if (isTag(currStmt->args[0], "EnvWrite"))
+    {
+      handleEnvWrite(ctx, instructions, currStmt->args[0], false);
+      return;
+    }
+
+    if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "FieldWrite"))
+    {
+      handleFieldWrite(ctx, instructions, currStmt->args[0], false);
+      return;
+    }
+
+
+    if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "JSComputedFieldWrite"))
+    {
+      handleComputedFieldWrite(ctx, instructions, currStmt->args[0], false);
+      return;
+    }
+
     if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "IDOP"))
     {
       auto rval = currStmt->args[0];
@@ -2211,12 +2303,35 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
 
       // Read field
       IridiumSEXP *computedFieldRead = rval->args[0];
+      // If this was reduced was field read reduction
+      if (isTag(computedFieldRead, "FieldRead"))
+      {
+        // Read field
+        IridiumSEXP *fieldRead = computedFieldRead;
+        assert(isTag(fieldRead, "FieldRead"));
+        IridiumSEXP *field = fieldRead->args[1];
+        ensureTag(field, "String");
+        JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(field, "IridiumPrimitive"));
+
+        handleFieldRead(ctx, instructions, fieldRead, true);
+        // obj obj.field
+
+        // obj oldVal
+        pushOP(ctx, instructions, isIncrement ? OP_inc : OP_dec);
+        // obj newVal
+        pushOP32(ctx, instructions, OP_put_field, fieldAtom);
+        // {EMPTY STACK}
+
+        return;
+      }
+      
+      // Default case
       assert(isTag(computedFieldRead, "JSComputedFieldRead"));
       IridiumSEXP *receiver = computedFieldRead->args[0];
       lowerToStack(ctx, instructions, receiver);
       IridiumSEXP *field = computedFieldRead->args[1];
       lowerToStack(ctx, instructions, field);
-      
+
       pushOP(ctx, instructions, OP_to_propkey2);
       pushOP(ctx, instructions, OP_dup2);
       pushOP(ctx, instructions, OP_get_array_el);
@@ -3661,12 +3776,14 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
   {
     if (i == topLevelModuleIdx)
       continue;
+    #ifdef LINKING_DUMP_FUNCTION
     JSValue funBC = moduleList[i];
     JSFunctionBytecode *b = (JSFunctionBytecode *)funBC.u.ptr;
     if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
     {
       js_dump_function_bytecode(ctx, b);
     }
+    #endif
   }
 
   return moduleList[topLevelModuleIdx];
@@ -3706,10 +3823,12 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
   if (!isModule)
   {
+    #ifdef LINKING_DUMP_FUNCTION
     if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
     {
       js_dump_function_bytecode(ctx, b);
     }
+    #endif
     return ((IridiumLoadResult){false, b});
   }
 
@@ -3832,11 +3951,13 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
     }
   }
 
+  #ifdef LINKING_DUMP_FUNCTION
   if (check_dump_flag(ctx, JS_DUMP_BYTECODE_FINAL))
   {
     fprintf(stdout, "[Iridium] Dumping compiled topLevel code\n");
     js_dump_function_bytecode(ctx, b);
   }
+  #endif
 
   m->func_obj = moduleFunVal;
 
@@ -3845,6 +3966,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 
 void eval_iri_file(JSContext *ctx, const char *filename)
 {
+  auto start = std::chrono::high_resolution_clock::now();
   cJSON *json;
   {
     // ScopedTimer t("load_json");
@@ -3865,13 +3987,34 @@ void eval_iri_file(JSContext *ctx, const char *filename)
       JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
 
       JS_ResolveModule(ctx, moduleVal);
+
+      auto end = std::chrono::high_resolution_clock::now();
+
+      // Compute duration
+      std::chrono::duration<double, std::milli> duration = end - start;
+      std::cout << "[IRIDIUM] Parse time: " << duration.count() << " ms" << std::endl;
+
       JSValue res = JS_EvalFunction(ctx, moduleVal);
+
+      end = std::chrono::high_resolution_clock::now();
+      duration = end - start;
+      std::cout << "[IRIDIUM] Execution time: " << duration.count() << " ms" << std::endl;
+
       JS_FreeValue(ctx, res);
     }
     else
     {
       JSValue func_val = JS_MKPTR(JS_TAG_FUNCTION_BYTECODE, iriRes.ptr);
+
+      auto end = std::chrono::high_resolution_clock::now();
+
+      std::chrono::duration<double, std::milli> duration = end - start;
+      std::cout << "[IRIDIUM] Parse time: " << duration.count() << " ms" << std::endl;
+      start = std::chrono::high_resolution_clock::now();
       JSValue res = JS_EvalFunction(ctx, func_val);
+      end = std::chrono::high_resolution_clock::now();
+      duration = end - start;
+      std::cout << "[IRIDIUM] Execution time: " << duration.count() << " ms" << std::endl;
       JS_FreeValue(ctx, res);
     }
   }
