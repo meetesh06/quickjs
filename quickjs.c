@@ -30196,7 +30196,7 @@ static void dump_byte_code(JSContext *ctx, int pass,
         if (bits && bits[pos]) {
             printf("%5d:  ", pos);
         } else {
-            printf("        ");
+            printf("%5d:  ", pos);
         }
         printf("%-15s", oi->name);  /* align opcode arguments */
         pos++;
