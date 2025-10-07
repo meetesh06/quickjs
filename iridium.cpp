@@ -18,6 +18,7 @@ extern "C"
 #include <iostream>
 #include <chrono>
 #include <string>
+#include <set>
 
 #define LINKING_DUMP_FUNCTION
 
@@ -359,6 +360,111 @@ typedef struct BCLList
   uint8_t flags;
   // Extend the data structure to accomodate arguments dynamically
 } BCInstruction;
+
+enum GOTOCONTEXT
+{
+  MULTI,
+
+  put_loc0 = 1000,
+  put_loc1 = 1001,
+  put_loc2 = 1002,
+  put_loc3 = 1003,
+
+  put_arg0 = 2000,
+  put_arg1 = 2001,
+  put_arg2 = 2002,
+  put_arg3 = 2003,
+
+  put_var_ref0 = 3000,
+  put_var_ref1 = 3001,
+  put_var_ref2 = 3002,
+  put_var_ref3 = 3003
+};
+
+struct GOTOINFO
+{
+  GOTOCONTEXT kind;
+  std::set<double> putTargets;
+
+  GOTOINFO() : kind(GOTOCONTEXT::MULTI) {}
+
+  GOTOINFO(vector<BCInstruction> &instructions)
+  {
+    auto &currInst = instructions.back();
+    kind = getInstContext(currInst);
+
+    if (kind != GOTOCONTEXT::MULTI)
+      putTargets.insert(instructions.size() - 1);
+  }
+
+  void reduce(double idx)
+  {
+    if (kind == GOTOCONTEXT::MULTI)
+      return;
+
+    // Collect elements > idx
+    std::vector<double> toUpdate;
+    for (double val : putTargets)
+    {
+      if (val > idx)
+        toUpdate.push_back(val);
+    }
+
+    // Remove old ones and insert reduced ones
+    for (double val : toUpdate)
+    {
+      putTargets.erase(val);
+      putTargets.insert(val - 1);
+    }
+  }
+
+  static GOTOCONTEXT getInstContext(BCInstruction currInst)
+  {
+    if (currInst.bc == OP_put_loc0)
+      return GOTOCONTEXT::put_loc0;
+    if (currInst.bc == OP_put_loc1)
+      return GOTOCONTEXT::put_loc1;
+    if (currInst.bc == OP_put_loc2)
+      return GOTOCONTEXT::put_loc2;
+    if (currInst.bc == OP_put_loc3)
+      return GOTOCONTEXT::put_loc3;
+
+    if (currInst.bc == OP_put_arg0)
+      return GOTOCONTEXT::put_arg0;
+    if (currInst.bc == OP_put_arg1)
+      return GOTOCONTEXT::put_arg1;
+    if (currInst.bc == OP_put_arg2)
+      return GOTOCONTEXT::put_arg2;
+    if (currInst.bc == OP_put_arg3)
+      return GOTOCONTEXT::put_arg3;
+
+    if (currInst.bc == OP_put_var_ref0)
+      return GOTOCONTEXT::put_var_ref0;
+    if (currInst.bc == OP_put_var_ref1)
+      return GOTOCONTEXT::put_var_ref1;
+    if (currInst.bc == OP_put_var_ref2)
+      return GOTOCONTEXT::put_var_ref2;
+    if (currInst.bc == OP_put_var_ref3)
+      return GOTOCONTEXT::put_var_ref3;
+
+    return GOTOCONTEXT::MULTI;
+  }
+
+  void merge(vector<BCInstruction> &instructions)
+  {
+    if (kind == GOTOCONTEXT::MULTI)
+      return;
+
+    auto &currInst = instructions.back();
+    if (getInstContext(currInst) != kind)
+      kind = GOTOCONTEXT::MULTI;
+
+    if (kind != GOTOCONTEXT::MULTI)
+      putTargets.insert(instructions.size() - 1);
+  }
+};
+
+std::unordered_map<double, GOTOINFO> *gotoContextMap = NULL;
 
 // ============== Push OP ============== //
 void pushLabel(JSContext *ctx, vector<BCInstruction> &instructions, int label)
@@ -2009,15 +2115,49 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "BitInt"))
   {
-    char *str = getFlagString(rval, "IridiumPrimitive");
-    JSBigInt *r;
-    JSValue val;
-    r = js_bigint_from_string(ctx, str, 10);
-    if (!r)
-    {
-      val = JS_ThrowOutOfMemory(ctx);
+        char *str = getFlagString(rval, "IridiumPrimitive");
+    size_t len = strlen(str);
+
+    // Strip trailing 'n' or 'N' (JS BigInt literal)
+    if (len > 0 && (str[len - 1] == 'n' || str[len - 1] == 'N')) {
+        str[len - 1] = '\0';
+        len--;
     }
-    val = JS_CompactBigInt(ctx, r);
+
+    // Detect radix
+    int radix = 10;
+    if (len > 2 && str[0] == '0') {
+        if (str[1] == 'x' || str[1] == 'X') {
+            radix = 16;
+            memmove(str, str + 2, len - 1); // strip "0x"
+        } else if (str[1] == 'o' || str[1] == 'O') {
+            radix = 8;
+            memmove(str, str + 2, len - 1); // strip "0o"
+        } else if (str[1] == 'b' || str[1] == 'B') {
+            radix = 2;
+            memmove(str, str + 2, len - 1); // strip "0b"
+        }
+    }
+
+    // Remove underscores (JS allows 1_000_000n)
+    {
+        char *read = str, *write = str;
+        while (*read) {
+            if (*read != '_')
+                *write++ = *read;
+            read++;
+        }
+        *write = '\0';
+    }
+
+    // Parse as BigInt
+    JSBigInt *r = js_bigint_from_string(ctx, str, radix);
+    if (!r) {
+        JS_ThrowOutOfMemory(ctx);
+        return;
+    }
+
+    JSValue val = JS_CompactBigInt(ctx, r);
     return pushOPConst(ctx, instructions, OP_push_const, val);
   }
   else if (isTag(rval, "Await"))
@@ -2237,22 +2377,22 @@ void peepholeOptimizeStackOPS(std::vector<BCInstruction> &instructions, std::uno
     auto &curr = instructions[i];
     auto &next = instructions[i + 1];
 
-    // Safety Check
-    bool safe = true;
-    for (auto & e : iriOffsetToStartInstMap)
-    {
-      if (i + 1 == e.second) 
-      {
-        safe = false;
-        break;
-      }
-    }
+    // // Safety Check
+    // bool safe = true;
+    // for (auto & e : iriOffsetToStartInstMap)
+    // {
+    //   if (i + 1 == e.second)
+    //   {
+    //     safe = false;
+    //     break;
+    //   }
+    // }
 
-    if (!safe)
-    {
-      ++i;
-      continue;
-    }
+    // if (!safe)
+    // {
+    //   ++i;
+    //   continue;
+    // }
 
     // -------------------------------
     // Case 1: get_loc_0 + get_loc_1 → get_loc0_loc1
@@ -2260,17 +2400,39 @@ void peepholeOptimizeStackOPS(std::vector<BCInstruction> &instructions, std::uno
     if (curr.bc == OP_get_loc0 && next.bc == OP_get_loc1)
     {
 
+      // Safety Check
+      bool safe = true;
+      for (auto &e : iriOffsetToStartInstMap)
+      {
+        if (i + 1 == e.second)
+        {
+          safe = false;
+          break;
+        }
+      }
+
+      if (!safe)
+      {
+        ++i;
+        continue;
+      }
+
       curr.bc = OP_get_loc0_loc1;
 
       // curr.bc = OP_get_loc0_loc1;
       instructions.erase(instructions.begin() + i + 1);
 
-      for (auto e : iriOffsetToStartInstMap)
+      for (auto &e : iriOffsetToStartInstMap)
       {
         if (e.second > i)
         {
           iriOffsetToStartInstMap[e.first]--;
         }
+      }
+
+      for (auto &e : *gotoContextMap)
+      {
+        e.second.reduce(i);
       }
 
       continue;
@@ -2285,110 +2447,399 @@ void peepholeOptimizeStackOPS(std::vector<BCInstruction> &instructions, std::uno
         (curr.bc == OP_put_loc2 && next.bc == OP_get_loc2) ||
         (curr.bc == OP_put_loc3 && next.bc == OP_get_loc3))
     {
-      switch (curr.bc)
-      {
-      case OP_put_loc0:
-        curr.bc = OP_set_loc0;
-        break;
-      case OP_put_loc1:
-        curr.bc = OP_set_loc1;
-        break;
-      case OP_put_loc2:
-        curr.bc = OP_set_loc2;
-        break;
-      case OP_put_loc3:
-        curr.bc = OP_set_loc3;
-        break;
-      default:
-        break;
-      }
-      instructions.erase(instructions.begin() + i + 1);
 
-      for (auto e : iriOffsetToStartInstMap)
+      // Safety Check
+      bool safe = true;
+      double iriContext = -1;
+      for (auto &e : iriOffsetToStartInstMap)
       {
-        if (e.second > i)
+        if (i + 1 == e.second)
         {
-          iriOffsetToStartInstMap[e.first]--;
+          iriContext = e.first;
+          safe = false;
+          break;
         }
       }
-      continue;
+
+      if (safe)
+      {
+        switch (curr.bc)
+        {
+        case OP_put_loc0:
+          curr.bc = OP_set_loc0;
+          break;
+        case OP_put_loc1:
+          curr.bc = OP_set_loc1;
+          break;
+        case OP_put_loc2:
+          curr.bc = OP_set_loc2;
+          break;
+        case OP_put_loc3:
+          curr.bc = OP_set_loc3;
+          break;
+        default:
+          break;
+        }
+        instructions.erase(instructions.begin() + i + 1);
+
+        for (auto &e : iriOffsetToStartInstMap)
+        {
+          if (e.second > i)
+          {
+            iriOffsetToStartInstMap[e.first]--;
+          }
+        }
+
+        for (auto &e : *gotoContextMap)
+        {
+          e.second.reduce(i);
+        }
+
+        ++i;
+        continue;
+      }
+      else
+      {
+        if (gotoContextMap->count(iriContext) == 0 || (*gotoContextMap)[iriContext].kind == GOTOCONTEXT::MULTI)
+        {
+          ++i;
+          continue;
+        }
+        else
+        {
+          if (GOTOINFO::getInstContext(curr) == (*gotoContextMap)[iriContext].kind)
+          {
+            switch (curr.bc)
+            {
+            case OP_put_loc0:
+              curr.bc = OP_set_loc0;
+              break;
+            case OP_put_loc1:
+              curr.bc = OP_set_loc1;
+              break;
+            case OP_put_loc2:
+              curr.bc = OP_set_loc2;
+              break;
+            case OP_put_loc3:
+              curr.bc = OP_set_loc3;
+              break;
+            default:
+              break;
+            }
+
+            instructions.erase(instructions.begin() + i + 1);
+
+            for (auto &e : iriOffsetToStartInstMap)
+            {
+              if (e.second > i)
+              {
+                iriOffsetToStartInstMap[e.first]--;
+              }
+            }
+
+            for (auto &e : *gotoContextMap)
+            {
+              e.second.reduce(i);
+            }
+
+            while ((*gotoContextMap)[iriContext].putTargets.size() > 0)
+            {
+              auto it = (*gotoContextMap)[iriContext].putTargets.begin();
+              auto putTargetToRemove = *it;
+              (*gotoContextMap)[iriContext].putTargets.erase(putTargetToRemove);
+
+              instructions.erase(instructions.begin() + putTargetToRemove);
+
+              for (auto &e : iriOffsetToStartInstMap)
+              {
+                if (e.second > putTargetToRemove)
+                {
+                  iriOffsetToStartInstMap[e.first]--;
+                }
+              }
+
+              for (auto &e : *gotoContextMap)
+              {
+                e.second.reduce(putTargetToRemove);
+              }
+            }
+
+            continue;
+          }
+          else
+          {
+            ++i;
+            continue;
+          }
+        }
+      }
     }
 
-    // -------------------------------
-    // Case 3: put_argX + get_argX → set_argX
-    // -------------------------------
     if (
         (curr.bc == OP_put_arg0 && next.bc == OP_get_arg0) ||
         (curr.bc == OP_put_arg1 && next.bc == OP_get_arg1) ||
         (curr.bc == OP_put_arg2 && next.bc == OP_get_arg2) ||
         (curr.bc == OP_put_arg3 && next.bc == OP_get_arg3))
     {
-      switch (curr.bc)
-      {
-      case OP_put_arg0:
-        curr.bc = OP_set_arg0;
-        break;
-      case OP_put_arg1:
-        curr.bc = OP_set_arg1;
-        break;
-      case OP_put_arg2:
-        curr.bc = OP_set_arg2;
-        break;
-      case OP_put_arg3:
-        curr.bc = OP_set_arg3;
-        break;
-      default:
-        break;
-      }
-      instructions.erase(instructions.begin() + i + 1);
 
-      for (auto e : iriOffsetToStartInstMap)
+      // Safety Check
+      bool safe = true;
+      double iriContext = -1;
+      for (auto &e : iriOffsetToStartInstMap)
       {
-        if (e.second > i)
+        if (i + 1 == e.second)
         {
-          iriOffsetToStartInstMap[e.first]--;
+          iriContext = e.first;
+          safe = false;
+          break;
         }
       }
-      continue;
+
+      if (safe)
+      {
+        switch (curr.bc)
+        {
+        case OP_put_arg0:
+          curr.bc = OP_set_arg0;
+          break;
+        case OP_put_arg1:
+          curr.bc = OP_set_arg1;
+          break;
+        case OP_put_arg2:
+          curr.bc = OP_set_arg2;
+          break;
+        case OP_put_arg3:
+          curr.bc = OP_set_arg3;
+          break;
+        default:
+          break;
+        }
+        instructions.erase(instructions.begin() + i + 1);
+
+        for (auto &e : iriOffsetToStartInstMap)
+        {
+          if (e.second > i)
+          {
+            iriOffsetToStartInstMap[e.first]--;
+          }
+        }
+
+        for (auto &e : *gotoContextMap)
+        {
+          e.second.reduce(i);
+        }
+
+        ++i;
+        continue;
+      }
+      else
+      {
+        if (gotoContextMap->count(iriContext) == 0 || (*gotoContextMap)[iriContext].kind == GOTOCONTEXT::MULTI)
+        {
+          ++i;
+          continue;
+        }
+        else
+        {
+          if (GOTOINFO::getInstContext(curr) == (*gotoContextMap)[iriContext].kind)
+          {
+            switch (curr.bc)
+            {
+            case OP_put_arg0:
+              curr.bc = OP_set_arg0;
+              break;
+            case OP_put_arg1:
+              curr.bc = OP_set_arg1;
+              break;
+            case OP_put_arg2:
+              curr.bc = OP_set_arg2;
+              break;
+            case OP_put_arg3:
+              curr.bc = OP_set_arg3;
+              break;
+            default:
+              break;
+            }
+            instructions.erase(instructions.begin() + i + 1);
+
+            for (auto &e : iriOffsetToStartInstMap)
+            {
+              if (e.second > i)
+              {
+                iriOffsetToStartInstMap[e.first]--;
+              }
+            }
+
+            for (auto &e : *gotoContextMap)
+            {
+              e.second.reduce(i);
+            }
+
+            while ((*gotoContextMap)[iriContext].putTargets.size() > 0)
+            {
+              auto it = (*gotoContextMap)[iriContext].putTargets.begin();
+              auto putTargetToRemove = *it;
+              (*gotoContextMap)[iriContext].putTargets.erase(putTargetToRemove);
+
+              instructions.erase(instructions.begin() + putTargetToRemove);
+
+              for (auto &e : iriOffsetToStartInstMap)
+              {
+                if (e.second > putTargetToRemove)
+                {
+                  iriOffsetToStartInstMap[e.first]--;
+                }
+              }
+
+              for (auto &e : *gotoContextMap)
+              {
+                e.second.reduce(putTargetToRemove);
+              }
+            }
+
+            continue;
+          }
+          else
+          {
+            ++i;
+            continue;
+          }
+        }
+      }
     }
 
-    // -------------------------------
-    // Case 4: put_var_refX + get_var_refX → set_var_refX
-    // -------------------------------
     if (
         (curr.bc == OP_put_var_ref0 && next.bc == OP_get_var_ref0) ||
         (curr.bc == OP_put_var_ref1 && next.bc == OP_get_var_ref1) ||
         (curr.bc == OP_put_var_ref2 && next.bc == OP_get_var_ref2) ||
         (curr.bc == OP_put_var_ref3 && next.bc == OP_get_var_ref3))
     {
-      switch (curr.bc)
+
+      // Safety Check
+      bool safe = true;
+      double iriContext = -1;
+      for (auto &e : iriOffsetToStartInstMap)
       {
-      case OP_put_var_ref0:
-        curr.bc = OP_set_var_ref0;
-        break;
-      case OP_put_var_ref1:
-        curr.bc = OP_set_var_ref1;
-        break;
-      case OP_put_var_ref2:
-        curr.bc = OP_set_var_ref2;
-        break;
-      case OP_put_var_ref3:
-        curr.bc = OP_set_var_ref3;
-        break;
-      default:
-        break;
-      }
-      instructions.erase(instructions.begin() + i + 1);
-      for (auto e : iriOffsetToStartInstMap)
-      {
-        if (e.second > i)
+        if (i + 1 == e.second)
         {
-          iriOffsetToStartInstMap[e.first]--;
+          iriContext = e.first;
+          safe = false;
+          break;
         }
       }
-      continue;
-    }
 
+      if (safe)
+      {
+        switch (curr.bc)
+        {
+        case OP_put_var_ref0:
+          curr.bc = OP_set_var_ref0;
+          break;
+        case OP_put_var_ref1:
+          curr.bc = OP_set_var_ref1;
+          break;
+        case OP_put_var_ref2:
+          curr.bc = OP_set_var_ref2;
+          break;
+        case OP_put_var_ref3:
+          curr.bc = OP_set_var_ref3;
+          break;
+        default:
+          break;
+        }
+        instructions.erase(instructions.begin() + i + 1);
+
+        for (auto &e : iriOffsetToStartInstMap)
+        {
+          if (e.second > i)
+          {
+            iriOffsetToStartInstMap[e.first]--;
+          }
+        }
+
+        for (auto &e : *gotoContextMap)
+        {
+          e.second.reduce(i);
+        }
+
+        ++i;
+        continue;
+      }
+      else
+      {
+        if (gotoContextMap->count(iriContext) == 0 || (*gotoContextMap)[iriContext].kind == GOTOCONTEXT::MULTI)
+        {
+          ++i;
+          continue;
+        }
+        else
+        {
+          if (GOTOINFO::getInstContext(curr) == (*gotoContextMap)[iriContext].kind)
+          {
+            switch (curr.bc)
+            {
+            case OP_put_var_ref0:
+              curr.bc = OP_set_var_ref0;
+              break;
+            case OP_put_var_ref1:
+              curr.bc = OP_set_var_ref1;
+              break;
+            case OP_put_var_ref2:
+              curr.bc = OP_set_var_ref2;
+              break;
+            case OP_put_var_ref3:
+              curr.bc = OP_set_var_ref3;
+              break;
+            default:
+              break;
+            }
+            instructions.erase(instructions.begin() + i + 1);
+
+            for (auto &e : iriOffsetToStartInstMap)
+            {
+              if (e.second > i)
+              {
+                iriOffsetToStartInstMap[e.first]--;
+              }
+            }
+
+            for (auto &e : *gotoContextMap)
+            {
+              e.second.reduce(i);
+            }
+
+            while ((*gotoContextMap)[iriContext].putTargets.size() > 0)
+            {
+              auto it = (*gotoContextMap)[iriContext].putTargets.begin();
+              auto putTargetToRemove = *it;
+              (*gotoContextMap)[iriContext].putTargets.erase(putTargetToRemove);
+
+              instructions.erase(instructions.begin() + putTargetToRemove);
+
+              for (auto &e : iriOffsetToStartInstMap)
+              {
+                if (e.second > putTargetToRemove)
+                {
+                  iriOffsetToStartInstMap[e.first]--;
+                }
+              }
+
+              for (auto &e : *gotoContextMap)
+              {
+                e.second.reduce(putTargetToRemove);
+              }
+            }
+
+            continue;
+          }
+          else
+          {
+            ++i;
+            continue;
+          }
+        }
+      }
+    }
     ++i;
   }
 }
@@ -2544,8 +2995,15 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
 
     bool isNot = hasFlag(currStmt, "NOT");
 
+    auto target = getFlagNumber(currStmt, "IDX");
+
+    if ((*gotoContextMap).count(target) == 0)
+      (*gotoContextMap)[target] = GOTOINFO();
+
+    (*gotoContextMap)[target].kind = GOTOCONTEXT::MULTI;
+
     // Jmp to TRUE if stack value is true
-    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "IDX"));
+    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, target);
 
     return;
   }
@@ -2556,11 +3014,27 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
     // Push check to stack
     lowerToStack(ctx, instructions, currStmt->args[0]);
 
+    auto trueTarget = getFlagNumber(currStmt, "TRUE");
+    auto falseTarget = getFlagNumber(currStmt, "FALSE");
+
+    {
+      if ((*gotoContextMap).count(trueTarget) == 0)
+        (*gotoContextMap)[trueTarget] = GOTOINFO();
+
+      (*gotoContextMap)[trueTarget].kind = GOTOCONTEXT::MULTI;
+    }
+    {
+      if ((*gotoContextMap).count(falseTarget) == 0)
+        (*gotoContextMap)[falseTarget] = GOTOINFO();
+
+      (*gotoContextMap)[falseTarget].kind = GOTOCONTEXT::MULTI;
+    }
+
     // Jmp to TRUE if stack value is true
-    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, getFlagNumber(currStmt, "TRUE"));
+    pushOP32(ctx, instructions, isNot ? OP_if_false : OP_if_true, trueTarget);
 
     // Jmp to FALSE if stack value is false
-    pushOP32(ctx, instructions, OP_goto, getFlagNumber(currStmt, "FALSE"));
+    pushOP32(ctx, instructions, OP_goto, falseTarget);
 
     return;
   }
@@ -2577,15 +3051,38 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   }
   else if (isTag(currStmt, "InvokeFinalizer"))
   {
-    return pushOP32(ctx, instructions, OP_gosub, getFlagNumber(currStmt, "IDX"));
+    auto target = getFlagNumber(currStmt, "IDX");
+    if ((*gotoContextMap).count(target) == 0)
+      (*gotoContextMap)[target] = GOTOINFO();
+
+    (*gotoContextMap)[target].kind = GOTOCONTEXT::MULTI;
+
+    return pushOP32(ctx, instructions, OP_gosub, target);
   }
   else if (isTag(currStmt, "Goto"))
   {
-    return pushOP32(ctx, instructions, OP_goto, getFlagNumber(currStmt, "IDX"));
+    auto target = getFlagNumber(currStmt, "IDX");
+
+    if ((*gotoContextMap).count(target) > 0)
+    {
+      (*gotoContextMap)[target].merge(instructions);
+    }
+    else
+    {
+      (*gotoContextMap)[target] = GOTOINFO(instructions);
+    }
+
+    return pushOP32(ctx, instructions, OP_goto, target);
   }
   else if (isTag(currStmt, "PushCatchContext"))
   {
-    return pushOP32(ctx, instructions, OP_catch, getFlagNumber(currStmt, "IDX"));
+    auto target = getFlagNumber(currStmt, "IDX");
+    if ((*gotoContextMap).count(target) == 0)
+      (*gotoContextMap)[target] = GOTOINFO();
+
+    (*gotoContextMap)[target].kind = GOTOCONTEXT::MULTI;
+
+    return pushOP32(ctx, instructions, OP_catch, target);
   }
   else if (isTag(currStmt, "PopCatchContext") || isTag(currStmt, "PopFinalizerReturnTarget"))
   {
@@ -3855,6 +4352,9 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
 
     std::unordered_map<uint32_t, size_t> iriOffsetToStartInstMap;
 
+    std::unordered_map<double, GOTOINFO> cMap;
+    gotoContextMap = &cMap;
+
     for (int idx = 0; idx < bbList->numArgs; idx++)
     {
       IridiumSEXP *bb = bbList->args[idx];
@@ -3869,11 +4369,37 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
       }
     }
 
+    for (auto it = cMap.begin(); it != cMap.end();)
+    {
+      if (it->second.kind == GOTOCONTEXT::MULTI || it->second.putTargets.size() == 0)
+      {
+        it = cMap.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
+    }
+
+    // std::cout << "GOTO contexts (original)" << std::endl;
+    // for (auto &e : cMap)
+    // {
+    //   std::cout << e.first << " " << e.second.kind << "( ";
+    //   for (auto & pt : e.second.putTargets)
+    //   {
+    //     std::cout << short_opcode_info(instructions[pt].bc).name << " ";
+    //   }
+    //   std::cout << ")" << std::endl;
+    // }
+    // std::cout << "====== ====== ====== ====== ====== ====== " << std::endl;
+
     // // Apply optimizations in sequence
     // std::cout << "Before Peephole";
     // dumpBCLList(ctx, instructions);
 
     peepholeOptimizeStackOPS(instructions, iriOffsetToStartInstMap);
+
+    gotoContextMap = NULL;
 
     // std::cout << "After Peephole";
     // dumpBCLList(ctx, instructions);
