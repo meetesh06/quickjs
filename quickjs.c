@@ -39233,7 +39233,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
     parse_start = clock();
     err = js_parse_program(s);
     parse_end = clock();
-    parse_time += ((double)(parse_end - parse_start)) / CLOCKS_PER_SEC;
+    parse_time += ((double)(parse_end - parse_start)) * 1000 / CLOCKS_PER_SEC;
 
     clock_t exec_start, exec_end;
     exec_start = clock();
@@ -39272,7 +39272,7 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
         ret_val = JS_EvalFunctionInternal(ctx, fun_obj, this_obj, var_refs, sf);
     }
     exec_end = clock();
-    exec_time += ((double)(exec_end - exec_start)) / CLOCKS_PER_SEC;
+    exec_time += ((double)(exec_end - exec_start)) * 1000 / CLOCKS_PER_SEC;
     return ret_val;
 fail1:
     /* XXX: should free all the unresolved dependencies */
@@ -39355,8 +39355,8 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
            (eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_MODULE);
     ret = JS_EvalInternal(ctx, this_obj, input, input_len, filename, line,
                           eval_flags, -1);
-    printf("Parse time=%fs\n", parse_time);
-    printf("Exec time=%fs\n", exec_time);
+    printf("[QUICKJS] Parse time=%f ms\n", parse_time);
+    printf("[QUICKJS] Execution time= %fms\n", exec_time);
     return ret;
 }
 
