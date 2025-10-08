@@ -4680,11 +4680,7 @@ void eval_iri_file(JSContext *ctx, const char *filename)
     exit(1);
   }
   {
-    auto start_compile = std::chrono::high_resolution_clock::now();
     IridiumLoadResult iriRes = compile_iri_module(ctx, json);
-    auto end_compile = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_compile - start_compile);
-    std::cout << "Lower Iridium to Quickjs time(ms)=" << duration.count() << " ms\n";
 
     // ScopedTimer t("evalIri");
     if (iriRes.isModule)

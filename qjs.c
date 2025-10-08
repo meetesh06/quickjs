@@ -116,8 +116,11 @@ static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
     if ((eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_MODULE) {
         /* for the modules, we compile then run to be able to set
            import.meta */
+        
+        // Use this when using quickjs with Iridium
         val = JS_Eval(ctx, buf, buf_len, filename,
                       eval_flags | JS_EVAL_FLAG_COMPILE_ONLY);
+
         if (!JS_IsException(val)) {
             // ex. "<cmdline>" pr "/dev/stdin"
             use_realpath =
@@ -160,6 +163,7 @@ static int eval_file(JSContext *ctx, const char *filename, int module)
         module = (js__has_suffix(filename, ".mjs") ||
                   JS_DetectModule((const char *)buf, buf_len));
     }
+    // printf("module=%d\n",module);
     if (module)
         eval_flags = JS_EVAL_TYPE_MODULE;
     else
