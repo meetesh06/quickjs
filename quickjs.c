@@ -121,6 +121,9 @@ static inline JSValueConst safe_const(JSValue v)
 #endif
 }
 
+// Globals for time measurement
+double parse_time=0.0, pass_1_time=0.0, pass_2_time=0.0, pass_3_time=0.0, exec_time=0.0;
+
 enum {
     /* classid tag        */    /* union usage   | properties */
     JS_CLASS_OBJECT = 1,        /* must be first */
@@ -30464,7 +30467,10 @@ static void dump_bytecode_buffer(FILE * target, const uint8_t *tab, int len)
 }
 
 static void js_profile_bc_freq(JSFunctionBytecode *b) {
+        printf("Here?");
+
     if (!getenv("DUMP_TARGET")) return;
+
     const char* filename = getenv("DUMP_TARGET");
 
     FILE* target = fopen(filename, "a");
@@ -33827,6 +33833,10 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
     int function_size, byte_code_offset, cpool_offset;
     int closure_var_offset, vardefs_offset;
 
+    clock_t pass_1_start, pass_1_end, pass_2_start, pass_2_end, pass_3_start, pass_3_end;
+    double elapsed;
+
+    pass_1_start = clock();
     /* recompute scope linkage */
     for (scope = 0; scope < fd->scope_count; scope++) {
         fd->scopes[scope].first = -1;
@@ -33882,6 +33892,9 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
         assert(cpool_idx >= 0);
         fd->cpool[cpool_idx] = func_obj;
     }
+    pass_1_end = clock();
+    elapsed = ((double)(pass_1_end - pass_1_start))/CLOCKS_PER_SEC;
+    pass_1_time += elapsed;
 
 #ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_PASS1
     if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_PASS1)) {
@@ -33895,8 +33908,12 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
     }
 #endif
 
+    pass_2_start = clock();
     if (resolve_variables(ctx, fd))
         goto fail;
+    pass_2_end = clock();
+    elapsed = ((double)(pass_2_end - pass_2_start))/CLOCKS_PER_SEC;
+    pass_2_time += elapsed;
 
 #ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_PASS2
     if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_PASS2)) {
@@ -33910,6 +33927,7 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
     }
 #endif
 
+    pass_3_start = clock();
     if (resolve_labels(ctx, fd))
         goto fail;
 
@@ -34001,15 +34019,21 @@ static JSValue js_create_function(JSContext *ctx, JSFunctionDef *fd)
     b->realm = JS_DupContext(ctx);
 
     add_gc_object(ctx->rt, &b->header, JS_GC_OBJ_TYPE_FUNCTION_BYTECODE);
+    
+    pass_3_end = clock();
+    elapsed = ((double)(pass_3_end - pass_3_start))/CLOCKS_PER_SEC;
+    pass_3_time += elapsed;
 
 #ifdef ENABLE_DUMPS // JS_DUMP_BYTECODE_FINAL
     if (check_dump_flag(ctx->rt, JS_DUMP_BYTECODE_FINAL))
         js_dump_function_bytecode(ctx, b);
 #endif
-
+    
 #ifdef ENABLE_DUMPS // JS_PROFILE_BYTECODE FREQUENCY
     if (check_dump_flag(ctx->rt, JS_PROFILE_BYTECODE_FREQ))
+    {
         js_profile_bc_freq(b);
+    }
 #endif
 
 
@@ -35014,7 +35038,12 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
     push_scope(s); /* body scope */
     fd->body_scope = fd->scope_level;
 
+    clock_t parse_start, parse_end;
+    parse_start = clock();
     err = js_parse_program(s);
+    parse_end = clock();
+    parse_time += ((double)(parse_end-parse_start))/CLOCKS_PER_SEC;
+
     if (err) {
     fail:
         free_token(s, &s->token);
@@ -35039,7 +35068,11 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
     if (flags & JS_EVAL_FLAG_COMPILE_ONLY) {
         ret_val = fun_obj;
     } else {
+        clock_t exec_start, exec_end;
+        exec_start = clock();
         ret_val = JS_EvalFunctionInternal(ctx, fun_obj, this_obj, var_refs, sf);
+        exec_end = clock();
+        exec_time += ((double)(exec_end - exec_start))/CLOCKS_PER_SEC; 
     }
     return ret_val;
  fail1:
@@ -35104,6 +35137,9 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
                      const char *input, size_t input_len,
                      JSEvalOptions *options)
 {
+    clock_t tot_start, tot_end;
+    tot_start = clock();
+
     const char *filename = "<unnamed>";
     int line = 1;
     int eval_flags = 0;
@@ -35122,6 +35158,18 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
            (eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_MODULE);
     ret = JS_EvalInternal(ctx, this_obj, input, input_len, filename, line,
                           eval_flags, -1);
+    tot_end = clock();
+    double tot_time = ((double)(tot_end-tot_start))/CLOCKS_PER_SEC;
+    
+    printf("Parse time=%fs\n",parse_time);
+    printf("Pass 1 time=%fs\n",pass_1_time);
+    printf("Pass 2 time=%fs\n",pass_2_time);
+    printf("Pass 3 time=%fs\n",pass_3_time);
+    printf("Traditional Exec time=%fs\n",exec_time);
+
+    double sum_time = parse_time + pass_1_time + pass_2_time + pass_3_time + exec_time;
+    printf("Total time excluding runtime setup=%fs\n",tot_time);
+    printf("Sum time=%fs\n",sum_time);
     return ret;
 }
 
