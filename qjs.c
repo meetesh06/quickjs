@@ -665,7 +665,6 @@ start:
             if (eval_file(ctx, include_list[i], 0))
                 goto fail;
         }
-
         if (standalone) {
             JSValue ns = load_standalone_module(ctx);
             if (JS_IsException(ns))

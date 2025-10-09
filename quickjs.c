@@ -39355,8 +39355,8 @@ JSValue JS_EvalThis2(JSContext *ctx, JSValueConst this_obj,
            (eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_MODULE);
     ret = JS_EvalInternal(ctx, this_obj, input, input_len, filename, line,
                           eval_flags, -1);
-    printf("[QUICKJS] Parse time=%f ms\n", parse_time);
-    printf("[QUICKJS] Execution time= %fms\n", exec_time);
+    printf("[QUICKJS] Parse time: %f ms\n", parse_time);
+    printf("[QUICKJS] Execution time: %fms\n", exec_time);
     return ret;
 }
 
@@ -59013,6 +59013,7 @@ void JS_AddIntrinsicEval(JSContext *ctx)
 {
 #ifndef QJS_DISABLE_PARSER
     ctx->eval_internal = __JS_EvalInternal;
+    
 #endif // QJS_DISABLE_PARSER
 }
 
