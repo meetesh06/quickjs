@@ -465,6 +465,7 @@ struct GOTOINFO
 };
 
 std::unordered_map<double, GOTOINFO> *gotoContextMap = NULL;
+std::unordered_map<uint32_t, size_t> *xyzz;
 
 // ============== Push OP ============== //
 void pushLabel(JSContext *ctx, vector<BCInstruction> &instructions, int label)
@@ -3063,13 +3064,31 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
   {
     auto target = getFlagNumber(currStmt, "IDX");
 
-    if ((*gotoContextMap).count(target) > 0)
+    bool isPeepholeSafe = true;
+
+    for (auto & e : *xyzz)
     {
-      (*gotoContextMap)[target].merge(instructions);
+      if (instructions.size() == e.second)
+      {
+        // This goto has incoming edges
+        isPeepholeSafe = false;
+      }
+    }
+
+    if (isPeepholeSafe)
+    {
+      if ((*gotoContextMap).count(target) > 0)
+      {
+        (*gotoContextMap)[target].merge(instructions);
+      }
+      else
+      {
+        (*gotoContextMap)[target] = GOTOINFO(instructions);
+      }
     }
     else
     {
-      (*gotoContextMap)[target] = GOTOINFO(instructions);
+      (*gotoContextMap)[target].kind = GOTOCONTEXT::MULTI;
     }
 
     return pushOP32(ctx, instructions, OP_goto, target);
@@ -4351,6 +4370,7 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node)
     IridiumSEXP *bbList = bbContainer->args[1];
 
     std::unordered_map<uint32_t, size_t> iriOffsetToStartInstMap;
+    xyzz = &iriOffsetToStartInstMap;
 
     std::unordered_map<double, GOTOINFO> cMap;
     gotoContextMap = &cMap;
