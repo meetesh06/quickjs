@@ -2097,6 +2097,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   {
     lowerToStack(ctx, instructions, rval->args[0]);
     lowerToStack(ctx, instructions, rval->args[1]);
+    pushOP(ctx, instructions, OP_get_super);
     lowerToStack(ctx, instructions, rval->args[2]);
     return pushOP(ctx, instructions, OP_get_super_value);
   }
