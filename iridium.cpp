@@ -1858,6 +1858,16 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     uint32_t poolOffset = getFlagNumber(rval, "REFIDX");
     pushOP32(ctx, instructions, OP_fclosure, poolOffset);
     instructions.back().lambdaPoolReference = true;
+
+    // if set name is true, set the name
+    IridiumSEXP *lambdaSEXP = rval->args[0];
+    ensureTag(lambdaSEXP, "Lambda");
+    if (getFlagBoolean(lambdaSEXP, "SETNAME") && getFlagBoolean(lambdaSEXP, "CNAME") == false)
+    {
+      auto nn = getFlagString(lambdaSEXP, "NAME");
+      JSAtom lName = JS_NewAtom(ctx, nn);
+      pushOP32(ctx, instructions, OP_set_name, lName);
+    }
     return;
   }
   else if (isTag(rval, "JSClass"))
@@ -3894,7 +3904,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCI
   b->defined_arg_count = ecmaArgsCount;
 
   // Metadata
-  b->func_name = JS_ATOM_NULL;
+  b->func_name = JS_NewAtom(ctx, getFlagString(bbContainer, "NAME"));
   b->filename = JS_ATOM_NULL;
   b->line_num = 1;
   b->col_num = 1;
