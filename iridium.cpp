@@ -1585,9 +1585,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
       }
       else if (isTag(valToDelete, "UNOPDelVar"))
       {
-        IridiumSEXP *var = valToDelete->args[0];
-        assert(isTag(var, "String"));
-        JSAtom varAtom = JS_NewAtom(ctx, getFlagString(var, "IridiumPrimitive"));
+        JSAtom varAtom = JS_NewAtom(ctx, getFlagString(valToDelete, "NAME"));
         return pushOP32(ctx, instructions, OP_delete_var, varAtom);
       }
       else
