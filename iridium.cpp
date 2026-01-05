@@ -2268,14 +2268,28 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   {
     // Push obj onto the stack
     lowerToStack(ctx, instructions, rval->args[0]);
-
+    
     // obj -> enum_obj iterator_method catch_offset
-    return pushOP(ctx, instructions, OP_for_of_start);
+    if (getFlagBoolean(rval, "AWAIT")) {
+      return pushOP(ctx, instructions, OP_for_await_of_start);
+    } else {
+      return pushOP(ctx, instructions, OP_for_of_start);
+    }
   }
   else if (isTag(rval, "JSForOfNext"))
   {
-    // [it, meth, off] -> [it, meth, off, result, done]
-    return pushOP16(ctx, instructions, OP_for_of_next, 0);
+
+    if (getFlagBoolean(rval, "AWAIT")) {
+      pushOP(ctx, instructions, OP_dup3);
+      pushOP(ctx, instructions, OP_drop);
+      pushOP16(ctx, instructions, OP_call_method, 0);
+      pushOP(ctx, instructions, OP_await);
+      // [it, meth, off, <RESOLVED>] -> [it, meth, off, result, done]
+      return pushOP(ctx, instructions, OP_iterator_get_value_done);
+    } else {
+      // [it, meth, off] -> [it, meth, off, result, done]
+      return pushOP16(ctx, instructions, OP_for_of_next, 0);
+    }
   }
   else if (isTag(rval, "JSForOfIteratorClose"))
   {
