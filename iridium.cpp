@@ -3302,6 +3302,14 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions, IridiumS
       exit(1);
     }
   }
+  else if (isTag(currStmt, "StackToHeap")) {
+    for (int i = 0; i < currStmt->numArgs; i++) {
+      IridiumSEXP *envBinding = currStmt->args[i];
+      ensureTag(envBinding, "EnvBinding");
+      int stackLocationIDX = getFlagNumber(envBinding, "REFIDX");
+      pushOP16(ctx, instructions, OP_close_loc, stackLocationIDX);
+    }
+  }
   else
   {
     fprintf(stderr, "TODO: unhandled tag: %s\n", currStmt->tag);
