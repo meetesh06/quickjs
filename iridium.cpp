@@ -1294,6 +1294,56 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     else
       return pushOP32(ctx, instructions, OP_get_var, JS_NewAtom(ctx, lookupVal));
   }
+  else if (isTag(rval, "Apply"))
+  {
+    assert(rval->numArgs == 3 && "Apply requires exactly three arguments");
+
+    auto& callee           = rval->args[0];
+    auto& calleeCTX        = rval->args[1];
+    auto& argList          = rval->args[2];
+    bool isConstructorCall = hasFlag(rval, "ConstructorCall");
+    bool isJSDirectEval      = hasFlag(rval, "JSDirectEval");
+    
+    // Lower callee
+    lowerToStack(ctx, instructions, callee);
+
+    if (isConstructorCall && isJSDirectEval) {
+      throw std::runtime_error("tried to call eval as a constructor");
+    }
+
+    // Lower callee context
+    if (isConstructorCall)
+    {
+      pushOP(ctx, instructions, OP_dup);
+    }
+    else if (isJSDirectEval)
+    {
+      // Do nothing
+    }
+    else
+    {
+      lowerToStack(ctx, instructions, calleeCTX);
+    }
+
+    // Lower arglist
+    lowerToStack(ctx, instructions, argList);
+
+    // Emit call
+    if (isConstructorCall)
+    {
+      return pushOP16(ctx, instructions, OP_apply, 1);
+    }
+    else if (isJSDirectEval)
+    {
+      double directEvalScope = getFlagDouble(rval, "JSDirectEval");
+      return pushOP16(ctx, instructions, OP_apply_eval, directEvalScope);
+    }
+    else
+    {
+      return pushOP16(ctx, instructions, OP_apply, 0);
+    }
+
+  }
   else if (isTag(rval, "CallSite"))
   {
     int i = 0;
