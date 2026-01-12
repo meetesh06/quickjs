@@ -3989,7 +3989,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer, vector<BCI
   // Function flags
   b->is_strict_mode = isStrict;
   b->has_prototype = 0;
-  b->has_simple_parameter_list = 1;
+  b->has_simple_parameter_list = 0;
   b->is_derived_class_constructor = 0;
   b->need_home_object = 0;
   b->func_kind = JS_FUNC_NORMAL;
@@ -4762,6 +4762,8 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, cJSON *json)
 #endif
 
   m->func_obj = moduleFunVal;
+  bool isTLA = hasFlag(iridiumCode, "TLA");
+  m->has_tla = isTLA;
 
   return ((IridiumLoadResult){true, m});
 }
