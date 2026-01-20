@@ -1298,11 +1298,12 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   {
     assert(rval->numArgs == 3 && "Apply requires exactly three arguments");
 
-    auto& callee           = rval->args[0];
-    auto& calleeCTX        = rval->args[1];
-    auto& argList          = rval->args[2];
-    bool isConstructorCall = hasFlag(rval, "ConstructorCall");
+    auto& callee             = rval->args[0];
+    auto& calleeCTX          = rval->args[1];
+    auto& argList            = rval->args[2];
+    bool isConstructorCall   = hasFlag(rval, "ConstructorCall");
     bool isJSDirectEval      = hasFlag(rval, "JSDirectEval");
+    bool isSuper             = hasFlag(rval, "Super");
     
     // Lower callee
     lowerToStack(ctx, instructions, callee);
@@ -1312,7 +1313,10 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     }
 
     // Lower callee context
-    if (isConstructorCall)
+    if (isSuper) {
+      lowerToStack(ctx, instructions, calleeCTX);
+    }
+    else if (isConstructorCall)
     {
       pushOP(ctx, instructions, OP_dup);
     }
@@ -1329,7 +1333,11 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     lowerToStack(ctx, instructions, argList);
 
     // Emit call
-    if (isConstructorCall)
+    if (isSuper) 
+    {
+      return pushOP16(ctx, instructions, OP_apply, 1);
+    }
+    else if (isConstructorCall)
     {
       return pushOP16(ctx, instructions, OP_apply, 1);
     }
@@ -1920,194 +1928,192 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   }
   else if (isTag(rval, "JSClass"))
   {
-    IridiumSEXP *className = rval->args[0];
-    ensureTag(className, "String");
-    JSAtom classNameAtom = JS_NewAtom(ctx, getFlagString(className, "IridiumPrimitive"));
+    JSAtom classNameAtom = JS_NewAtom(ctx, getFlagString(rval, "NAME"));
 
-    lowerToStack(ctx, instructions, rval->args[1]);
+    lowerToStack(ctx, instructions, rval->args[0]);
 
     // Instead of creating a closure, we push the constructor bytecode directly onto the stack
     {
-      IridiumSEXP *constructorClosure = rval->args[2];
+      IridiumSEXP *constructorClosure = rval->args[1];
       uint32_t poolOffset = getFlagNumber(constructorClosure, "REFIDX");
       pushOP32(ctx, instructions, OP_push_const, poolOffset);
       instructions.back().lambdaPoolReference = true;
     }
 
-    uint8_t flags = hasFlag(rval, "Derived") ? 1 : 0;
+    uint8_t flags = hasFlag(rval, "DERIVED") ? 1 : 0;
     pushOP32Flags(ctx, instructions, OP_define_class, classNameAtom, flags);
     // Class Flags, the bytecode itself is 5 + 1 bytes (1 byte OPcode + 4 byte name + 1 byte flags)
 
-    // Set home object for classPropInitClosure
-    IridiumSEXP *classPropInitClos = rval->args[3];
-    lowerToStack(ctx, instructions, classPropInitClos);
-    pushOP(ctx, instructions, OP_set_home_object);
-    pushOP(ctx, instructions, OP_drop); // <- Drops the closure, not the prototype: set does not pop
+    // // Set home object for classPropInitClosure
+    // IridiumSEXP *classPropInitClos = rval->args[3];
+    // lowerToStack(ctx, instructions, classPropInitClos);
+    // pushOP(ctx, instructions, OP_set_home_object);
+    // pushOP(ctx, instructions, OP_drop); // <- Drops the closure, not the prototype: set does not pop
 
-    // Define methods on the prototype
-    IridiumSEXP *methodList = rval->args[4];
-    for (int i = 0; i < methodList->numArgs; ++i)
-    {
-      IridiumSEXP *methodName = methodList->args[i]->args[0];
-      IridiumSEXP *methodLambda = methodList->args[i]->args[1];
-      IridiumSEXP *methodKind = methodList->args[i]->args[2];
-      assert(isTag(methodKind, "String"));
-      char *kindStr = getFlagString(methodKind, "IridiumPrimitive");
-      uint8_t op_flag;
+    // // Define methods on the prototype
+    // IridiumSEXP *methodList = rval->args[4];
+    // for (int i = 0; i < methodList->numArgs; ++i)
+    // {
+    //   IridiumSEXP *methodName = methodList->args[i]->args[0];
+    //   IridiumSEXP *methodLambda = methodList->args[i]->args[1];
+    //   IridiumSEXP *methodKind = methodList->args[i]->args[2];
+    //   assert(isTag(methodKind, "String"));
+    //   char *kindStr = getFlagString(methodKind, "IridiumPrimitive");
+    //   uint8_t op_flag;
 
-      if (strcmp(kindStr, "METHOD") == 0)
-      {
-        op_flag = OP_DEFINE_METHOD_METHOD;
-      }
-      else if (strcmp(kindStr, "GET") == 0)
-      {
-        op_flag = OP_DEFINE_METHOD_GETTER;
-      }
-      else if (strcmp(kindStr, "SET") == 0)
-      {
-        op_flag = OP_DEFINE_METHOD_SETTER;
-      }
-      else
-      {
-        fprintf(stderr, "TODO: Classmethod flag is invalid\n");
-        exit(1);
-      }
+    //   if (strcmp(kindStr, "METHOD") == 0)
+    //   {
+    //     op_flag = OP_DEFINE_METHOD_METHOD;
+    //   }
+    //   else if (strcmp(kindStr, "GET") == 0)
+    //   {
+    //     op_flag = OP_DEFINE_METHOD_GETTER;
+    //   }
+    //   else if (strcmp(kindStr, "SET") == 0)
+    //   {
+    //     op_flag = OP_DEFINE_METHOD_SETTER;
+    //   }
+    //   else
+    //   {
+    //     fprintf(stderr, "TODO: Classmethod flag is invalid\n");
+    //     exit(1);
+    //   }
 
-      if (isTag(methodName, "String"))
-      {
-        // Lower the method on the stack
-        lowerToStack(ctx, instructions, methodLambda);
+    //   if (isTag(methodName, "String"))
+    //   {
+    //     // Lower the method on the stack
+    //     lowerToStack(ctx, instructions, methodLambda);
 
-        // Get the method name atom
-        ensureTag(methodName, "String");
-        JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+    //     // Get the method name atom
+    //     ensureTag(methodName, "String");
+    //     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
 
-        // Define method on the prototype
-        pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
-      }
-      else if (isTag(methodName, "EnvRead"))
-      {
-        // Lower the computed name of the function on stack
-        lowerToStack(ctx, instructions, methodName);
+    //     // Define method on the prototype
+    //     pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
+    //   }
+    //   else if (isTag(methodName, "EnvRead"))
+    //   {
+    //     // Lower the computed name of the function on stack
+    //     lowerToStack(ctx, instructions, methodName);
 
-        // Lower the closure on the stack
-        lowerToStack(ctx, instructions, methodLambda);
+    //     // Lower the closure on the stack
+    //     lowerToStack(ctx, instructions, methodLambda);
 
-        // Define method on the prototype
-        pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
-      }
-      else if (isTag(methodName, "JSPrivate"))
-      {
-        // Get the lambda on the stack
-        lowerToStack(ctx, instructions, methodLambda);
+    //     // Define method on the prototype
+    //     pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
+    //   }
+    //   else if (isTag(methodName, "JSPrivate"))
+    //   {
+    //     // Get the lambda on the stack
+    //     lowerToStack(ctx, instructions, methodLambda);
 
-        // Set name
-        JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-        pushOP32(ctx, instructions, OP_set_name, privateMethodNameAtom);
+    //     // Set name
+    //     JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+    //     pushOP32(ctx, instructions, OP_set_name, privateMethodNameAtom);
 
-        // Set home to be the prototype
-        pushOP(ctx, instructions, OP_set_home_object); // sets the home to the prototype
+    //     // Set home to be the prototype
+    //     pushOP(ctx, instructions, OP_set_home_object); // sets the home to the prototype
 
-        pushOP(ctx, instructions, OP_drop); // <- Drop the closure from stack
-      }
-    }
+    //     pushOP(ctx, instructions, OP_drop); // <- Drop the closure from stack
+    //   }
+    // }
 
-    // Define methods on the constructor
-    pushOP(ctx, instructions, OP_swap); // ctr proto -> proto ctr
-    IridiumSEXP *staticMethodList = rval->args[5];
-    for (int i = 0; i < staticMethodList->numArgs; ++i)
-    {
-      IridiumSEXP *methodName = staticMethodList->args[i]->args[0];
-      IridiumSEXP *methodLambda = staticMethodList->args[i]->args[1];
-      IridiumSEXP *methodKind = staticMethodList->args[i]->args[2];
-      assert(isTag(methodKind, "String"));
-      char *kindStr = getFlagString(methodKind, "IridiumPrimitive");
-      uint8_t op_flag;
+    // // Define methods on the constructor
+    // pushOP(ctx, instructions, OP_swap); // ctr proto -> proto ctr
+    // IridiumSEXP *staticMethodList = rval->args[5];
+    // for (int i = 0; i < staticMethodList->numArgs; ++i)
+    // {
+    //   IridiumSEXP *methodName = staticMethodList->args[i]->args[0];
+    //   IridiumSEXP *methodLambda = staticMethodList->args[i]->args[1];
+    //   IridiumSEXP *methodKind = staticMethodList->args[i]->args[2];
+    //   assert(isTag(methodKind, "String"));
+    //   char *kindStr = getFlagString(methodKind, "IridiumPrimitive");
+    //   uint8_t op_flag;
 
-      if (strcmp(kindStr, "METHOD") == 0)
-      {
-        op_flag = OP_DEFINE_METHOD_METHOD;
-      }
-      else if (strcmp(kindStr, "GET") == 0)
-      {
-        op_flag = OP_DEFINE_METHOD_GETTER;
-      }
-      else if (strcmp(kindStr, "SET") == 0)
-      {
-        op_flag = OP_DEFINE_METHOD_SETTER;
-      }
-      else
-      {
-        fprintf(stderr, "TODO: Classmethod flag is invalid\n");
-        exit(1);
-      }
+    //   if (strcmp(kindStr, "METHOD") == 0)
+    //   {
+    //     op_flag = OP_DEFINE_METHOD_METHOD;
+    //   }
+    //   else if (strcmp(kindStr, "GET") == 0)
+    //   {
+    //     op_flag = OP_DEFINE_METHOD_GETTER;
+    //   }
+    //   else if (strcmp(kindStr, "SET") == 0)
+    //   {
+    //     op_flag = OP_DEFINE_METHOD_SETTER;
+    //   }
+    //   else
+    //   {
+    //     fprintf(stderr, "TODO: Classmethod flag is invalid\n");
+    //     exit(1);
+    //   }
 
-      if (isTag(methodName, "String"))
-      {
-        // Lower the method on the stack
-        lowerToStack(ctx, instructions, methodLambda);
+    //   if (isTag(methodName, "String"))
+    //   {
+    //     // Lower the method on the stack
+    //     lowerToStack(ctx, instructions, methodLambda);
 
-        // Get the method name atom
-        ensureTag(methodName, "String");
-        JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+    //     // Get the method name atom
+    //     ensureTag(methodName, "String");
+    //     JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
 
-        // Define method on the prototype
-        pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
-      }
-      else if (isTag(methodName, "EnvRead"))
-      {
-        // Lower the computed name of the function on stack
-        lowerToStack(ctx, instructions, methodName);
+    //     // Define method on the prototype
+    //     pushOP32Flags(ctx, instructions, OP_define_method, fieldAtom, op_flag);
+    //   }
+    //   else if (isTag(methodName, "EnvRead"))
+    //   {
+    //     // Lower the computed name of the function on stack
+    //     lowerToStack(ctx, instructions, methodName);
 
-        // Lower the closure on the stack
-        lowerToStack(ctx, instructions, methodLambda);
+    //     // Lower the closure on the stack
+    //     lowerToStack(ctx, instructions, methodLambda);
 
-        // Define method on the prototype
-        pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
-      }
-      else if (isTag(methodName, "JSPrivate"))
-      {
-        // Get the lambda on the stack
-        lowerToStack(ctx, instructions, methodLambda);
+    //     // Define method on the prototype
+    //     pushOPFlags(ctx, instructions, OP_define_method_computed, op_flag);
+    //   }
+    //   else if (isTag(methodName, "JSPrivate"))
+    //   {
+    //     // Get the lambda on the stack
+    //     lowerToStack(ctx, instructions, methodLambda);
 
-        // Set name
-        JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
-        pushOP32(ctx, instructions, OP_set_name, privateMethodNameAtom);
+    //     // Set name
+    //     JSAtom privateMethodNameAtom = JS_NewAtom(ctx, getFlagString(methodName, "IridiumPrimitive"));
+    //     pushOP32(ctx, instructions, OP_set_name, privateMethodNameAtom);
 
-        // Set home to be the prototype
-        pushOP(ctx, instructions, OP_set_home_object); // sets the home to the prototype
+    //     // Set home to be the prototype
+    //     pushOP(ctx, instructions, OP_set_home_object); // sets the home to the prototype
 
-        pushOP(ctx, instructions, OP_drop); // <- Drop the closure from stack
-      }
-    }
-    pushOP(ctx, instructions, OP_swap); // proto ctr -> ctr proto
+    //     pushOP(ctx, instructions, OP_drop); // <- Drop the closure from stack
+    //   }
+    // }
+    // pushOP(ctx, instructions, OP_swap); // proto ctr -> ctr proto
 
-    // BrandPrototype
-    if (hasFlag(rval, "BrandPrototype"))
-    {
-      pushOP(ctx, instructions, OP_dup);
-      pushOP(ctx, instructions, OP_null);
-      pushOP(ctx, instructions, OP_swap);
-      pushOP(ctx, instructions, OP_add_brand);
-    }
+    // // BrandPrototype
+    // if (hasFlag(rval, "BrandPrototype"))
+    // {
+    //   pushOP(ctx, instructions, OP_dup); // ctr proto -> ctr proto proto
+    //   pushOP(ctx, instructions, OP_null); // ctr proto proto null
+    //   pushOP(ctx, instructions, OP_swap); // ctr proto null proto 
+    //   pushOP(ctx, instructions, OP_add_brand); // ctr proto
+    // }
 
-    pushOP(ctx, instructions, OP_drop);
+    // pushOP(ctx, instructions, OP_drop); // ctr proto -> ctr
 
-    // BrandPrototype
-    if (hasFlag(rval, "BrandConstructor"))
-    {
-      pushOP(ctx, instructions, OP_dup);
-      pushOP(ctx, instructions, OP_dup);
-      pushOP(ctx, instructions, OP_add_brand);
-    }
+    // // BrandPrototype
+    // if (hasFlag(rval, "BrandConstructor"))
+    // {
+    //   pushOP(ctx, instructions, OP_dup); // ctr -> ctr ctr
+    //   pushOP(ctx, instructions, OP_dup); // ctr ctr ctr
+    //   pushOP(ctx, instructions, OP_add_brand); // ctr
+    // }
 
-    // Static Prop Init
-    IridiumSEXP *staticPropInitClosure = rval->args[6];
-    pushOP(ctx, instructions, OP_dup);
-    lowerToStack(ctx, instructions, staticPropInitClosure);
-    pushOP(ctx, instructions, OP_set_home_object);
-    pushOP16(ctx, instructions, OP_call_method, 0);
-    pushOP(ctx, instructions, OP_drop);
+    // // Static Prop Init
+    // IridiumSEXP *staticPropInitClosure = rval->args[6];
+    // pushOP(ctx, instructions, OP_dup);
+    // lowerToStack(ctx, instructions, staticPropInitClosure);
+    // pushOP(ctx, instructions, OP_set_home_object);
+    // pushOP16(ctx, instructions, OP_call_method, 0);
+    // pushOP(ctx, instructions, OP_drop);
 
     return;
   }
@@ -2370,21 +2376,23 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     uint8_t op_flag;
     if (hasFlag(rval, "METHOD"))
     {
-      op_flag = OP_DEFINE_METHOD_METHOD | OP_DEFINE_METHOD_ENUMERABLE;
+      op_flag = OP_DEFINE_METHOD_METHOD;
     }
     else if (hasFlag(rval, "GET"))
     {
-      op_flag = OP_DEFINE_METHOD_GETTER | OP_DEFINE_METHOD_ENUMERABLE;
+      op_flag = OP_DEFINE_METHOD_GETTER;
     }
     else if (hasFlag(rval, "SET"))
     {
-      op_flag = OP_DEFINE_METHOD_SETTER | OP_DEFINE_METHOD_ENUMERABLE;
+      op_flag = OP_DEFINE_METHOD_SETTER;
     }
     else
     {
       fprintf(stderr, "TODO: JSDefineObjMethod invalid flag\n");
       exit(1);
     }
+
+    if (!hasFlag(rval, "NOENUM")) op_flag = op_flag | OP_DEFINE_METHOD_ENUMERABLE;
 
     IridiumSEXP *obj = rval->args[0];
     lowerToStack(ctx, instructions, obj);
@@ -2408,6 +2416,34 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
   {
     // Do nothing
     return;
+  }
+  else if (isTag(rval, "JSSetName"))
+  {
+    IridiumSEXP *obj = rval->args[0];
+    lowerToStack(ctx, instructions, obj);
+
+    IridiumSEXP *name = rval->args[1];
+
+    if (isTag(name, "String"))
+    {
+      JSAtom fieldAtom = JS_NewAtom(ctx, getFlagString(name, "IridiumPrimitive"));
+      pushOP32(ctx, instructions, OP_set_name, fieldAtom);
+    }
+    else
+    {
+      lowerToStack(ctx, instructions, name);
+      pushOP(ctx, instructions, OP_set_name_computed);
+    }
+  }
+  else if (isTag(rval, "JSSetHome"))
+  {
+    IridiumSEXP *homeObj = rval->args[0];
+    lowerToStack(ctx, instructions, homeObj);
+
+    IridiumSEXP *funcObj = rval->args[1];
+    lowerToStack(ctx, instructions, funcObj);
+
+    pushOP(ctx, instructions, OP_set_home_object);
   }
   else
   {
