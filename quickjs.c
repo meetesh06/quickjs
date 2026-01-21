@@ -33801,7 +33801,7 @@ no_labels:
         {
             printf("%5d:  ", pos);
         }
-        printf("%-15s", oi->name); /* align opcode arguments */
+        printf("OP_%-15s", oi->name); /* align opcode arguments */
         pos++;
         switch (oi->fmt)
         {
@@ -34121,6 +34121,15 @@ void js_dump_function_bytecode(JSContext *ctx, JSFunctionBytecode *b)
 
     str = JS_AtomGetStr(ctx, atom_buf, sizeof(atom_buf), b->func_name);
     printf("function: %s%s\n", &"*"[b->func_kind != JS_FUNC_GENERATOR], str);
+    printf("  has_prototype: %d\n", b->has_prototype);
+    printf("  has_simple_parameter_list: %d\n", b->has_simple_parameter_list);
+    printf("  is_derived_class_constructor: %d\n", b->is_derived_class_constructor);
+    printf("  need_home_object: %d\n", b->need_home_object);
+    printf("  func_kind: %d\n", b->func_kind);
+    printf("  new_target_allowed: %d\n", b->new_target_allowed);
+    printf("  super_call_allowed: %d\n", b->super_call_allowed);
+    printf("  super_allowed: %d\n", b->super_allowed);
+    printf("  arguments_allowed: %d\n", b->arguments_allowed);
     printf("  mode: %s\n", b->is_strict_mode ? "strict" : "sloppy");
     if (b->arg_count && b->vardefs)
     {
