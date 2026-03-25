@@ -20,7 +20,7 @@ extern "C"
 #include <string>
 #include <set>
 
-#define LINKING_DUMP_FUNCTION
+// #define LINKING_DUMP_FUNCTION
 
 class ScopedTimer
 {
@@ -2444,6 +2444,16 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions, IridiumSE
     lowerToStack(ctx, instructions, funcObj);
 
     pushOP(ctx, instructions, OP_set_home_object);
+  }
+  else if (isTag(rval, "JSSetPrototypeOf"))
+  {
+    IridiumSEXP *obj = rval->args[0]; // targetObj
+    lowerToStack(ctx, instructions, obj);
+
+    IridiumSEXP *proto = rval->args[1]; // protoValue
+    lowerToStack(ctx, instructions, proto);
+
+    pushOP(ctx, instructions, OP_set_proto);
   }
   else
   {
