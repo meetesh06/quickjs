@@ -5,44 +5,19 @@
 #include <stdbool.h>
 #include "./quickjs.h"
 #include "./cJSON.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef enum  {
-    NUMBER,
-    STRING,
-    BOOLEAN,
-    NULLPTR
-} IridiumDataType;
 
-typedef struct IridiumFlag {
-    char * name;
-    IridiumDataType datatype;
-    union {
-        double number;
-        char * string;
-        bool boolean;
-        void * null;
-    } value;
-} IridiumFlag;
 
-typedef struct IridiumSEXP {
-    char * tag;
-    struct IridiumSEXP ** args;
-    int numArgs;
-    struct IridiumFlag ** flags;
-    int numFlags;
-} IridiumSEXP;
-
-IridiumSEXP *parseIridiumSEXP(cJSON *node);
+// IridiumSEXP *parseIridiumSEXP(cJSON *node);
 
 // Given a path to an iridium file, parse, load and execute
 void eval_iri_file(JSContext *ctx, const char *filename);
 
 // Given a path to an iridium pika bundle, parse, load and execute
-void eval_iri_pika(JSContext *ctx, const char *filename);
+// void eval_iri_pika(JSContext *ctx, const char *filename);
 
 // Some basic bit operations
 void setBit(int bitIndex, int *value);
