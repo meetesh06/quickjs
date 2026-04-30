@@ -116,7 +116,7 @@ static int eval_buf(JSContext *ctx, const void *buf, int buf_len,
     if ((eval_flags & JS_EVAL_TYPE_MASK) == JS_EVAL_TYPE_MODULE) {
         /* for the modules, we compile then run to be able to set
            import.meta */
-        
+
         // Use this when using quickjs with Iridium
         val = JS_Eval(ctx, buf, buf_len, filename,
                       eval_flags | JS_EVAL_FLAG_COMPILE_ONLY);
@@ -516,9 +516,9 @@ int main(int argc, char **argv)
                 dump_memory++;
                 continue;
             }
-            // 
+            //
             // Iridium options
-            // 
+            //
             if (opt == 'X' || !strcmp(longopt, "iri")) {
                 setBit(0, &iridium_opts);
                 continue;
@@ -703,7 +703,7 @@ start:
             if (isBitSet(0, iridium_opts)) {
                 eval_iri_file(ctx, argv[optind]);
             } else if (isBitSet(1, iridium_opts)) {
-                eval_iri_pika(ctx, argv[optind]);
+                // eval_iri_pika(ctx, argv[optind]);
             } else {
                 const char *filename;
                 filename = argv[optind];
