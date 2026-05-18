@@ -1458,7 +1458,9 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     }
     return;
   } else if (isTag(rval, "EnvWrite")) {
-    return handleEnvWrite(ctx, instructions, rval, true);
+    fprintf(stderr, "TODO: Unexpected EnvWrite in RVAL (deprecated)\n");
+    exit(1);
+    // return handleEnvWrite(ctx, instructions, rval, true);
   } else if (isTag(rval, "Boolean")) {
     bool res = getFlagBoolean(rval, "IridiumPrimitive");
     if (res) {
@@ -2616,16 +2618,62 @@ void peepholeOptimizeStackOPS(
 void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                    IridiumSEXP *currStmt) {
   // printf("stmt_type=%s\n",currStmt->tag);
-  if (isTag(currStmt, "EnvWrite")) {
-    handleEnvWrite(ctx, instructions, currStmt, false);
-  } else if (isTag(currStmt, "FieldWrite") ||
-             isTag(currStmt,
-                   "JSComputedFieldWrite")) // Make fast cases for these too...
+  if (isTag(currStmt, "GWrite")) {
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
+    bool tainted = hasFlag(currStmt, "TAINTED");
+    bool safe = hasFlag(currStmt, "SAFE");
+    bool thisInit = false;
+
+    if (tainted) {
+      fprintf(stderr, "TODO: handle tainted GWrites\n");
+      exit(1);
+    }
+    IridiumSEXP *loc = currStmt->args[0];
+    IridiumSEXP *rval = currStmt->args[1];
+
+    lowerToStack(ctx, instructions, rval);
+    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
+  } else if (isTag(currStmt, "LWrite")) {
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
+    // bool tainted = false;
+    bool safe = hasFlag(currStmt, "SAFE");
+    bool thisInit = hasFlag(currStmt, "THISINIT");
+
+    IridiumSEXP *loc = currStmt->args[0];
+    IridiumSEXP *rval = currStmt->args[1];
+
+    lowerToStack(ctx, instructions, rval);
+    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
+  } else if (isTag(currStmt, "RWrite")) {
+    bool isStrict = !hasFlag(currStmt, "SLOPPY");
+    bool tainted = hasFlag(currStmt, "TAINTED");
+    bool safe = hasFlag(currStmt, "SAFE");
+    bool thisInit = hasFlag(currStmt, "THISINIT");
+
+    if (tainted) {
+      fprintf(stderr, "TODO: handle tainted RWrite\n");
+      exit(1);
+    }
+    IridiumSEXP *loc = currStmt->args[0];
+    IridiumSEXP *rval = currStmt->args[1];
+
+    lowerToStack(ctx, instructions, rval);
+    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
+  }
+  else if (isTag(currStmt, "EnvWrite")) {
+    fprintf(stderr, "TODO: Unexpected EnvWrite in STMT (deprecated)\n");
+    exit(1);
+    // handleEnvWrite(ctx, instructions, currStmt, false);
+  } else if (isTag(currStmt, "JSSuperFieldWrite") ||
+             isTag(currStmt, "JSComputedFieldWrite") ||
+             isTag(currStmt, "FieldWrite") ||
+             isTag(currStmt, "JSPrivateFieldWrite")
+            )
   {
-    throw std::runtime_error(
-        "Unexpected Field Write and JSComputedFieldWrite outside stack ops");
-    // lowerToStack(ctx, instructions, currStmt);
-    // return pushOP(ctx, instructions, OP_drop);
+    // throw std::runtime_error(
+    //     "Unexpected Field Write and JSComputedFieldWrite outside stack ops");
+    lowerToStack(ctx, instructions, currStmt);
+    return pushOP(ctx, instructions, OP_drop);
   } else if (isTag(currStmt, "StackRetain")) {
     if (currStmt->numArgs > 0) {
       for (int i = 0; i < currStmt->numArgs; i++) {
@@ -2638,8 +2686,10 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     return;
   } else if (isTag(currStmt, "StackReject")) {
     if (isTag(currStmt->args[0], "EnvWrite")) {
-      handleEnvWrite(ctx, instructions, currStmt->args[0], false);
-      return;
+      fprintf(stderr, "TODO: Unexpected EnvWrite in StackReject-STMT (deprecated)\n");
+      exit(1);
+      // handleEnvWrite(ctx, instructions, currStmt->args[0], false);
+      // return;
     }
 
     if (currStmt->numArgs == 1 && isTag(currStmt->args[0], "FieldWrite")) {
@@ -2962,7 +3012,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                   define_flag);
 
     return;
-  } else if (isTag(currStmt, "JSFuncDecl")) {
+  } else if (isTag(currStmt, "JSSloppyFuncDecl")) {
     IridiumSEXP *loc = currStmt->args[0];
     IridiumSEXP *closure = currStmt->args[1];
 
