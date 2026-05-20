@@ -1511,10 +1511,20 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
                 valToDelete->tag.data());
         exit(1);
       }
+    } else if (strcmp(op, "++") == 0) {
+      lowerToStack(ctx, instructions, rval->args[0]);
+      return pushOP(ctx, instructions, OP_inc);
+    } else if (strcmp(op, "--") == 0) {
+      lowerToStack(ctx, instructions, rval->args[0]);
+      return pushOP(ctx, instructions, OP_dec);
     } else {
       fprintf(stderr, "TODO: unhandled Unop: %s\n", op);
       exit(1);
     }
+  } else if (isTag(rval, "ToNumeric")) {
+    lowerToStack(ctx, instructions, rval->args[0]);
+    pushOP(ctx, instructions, OP_post_inc);
+    return pushOP(ctx, instructions, OP_drop);
   } else if (isTag(rval, "Binop") || isTag(rval, "JSBinop")) {
     char *op = getFlagString(rval, "OP");
     if (strcmp(op, "+") == 0) {
@@ -2052,6 +2062,10 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     return pushOP(ctx, instructions, OP_add_brand);
   } else if (isTag(rval, "JSCheckConstructor")) {
     return pushOP(ctx, instructions, OP_check_ctor);
+  } else if (isTag(rval, "DCTRRet")) {
+    lowerToStack(ctx, instructions, rval->args[0]);
+    pushOP(ctx, instructions, OP_check_ctor_return);
+    return pushOP(ctx, instructions, OP_nip);
   } else if (isTag(rval, "StackPop")) {
     return;
   } else if (isTag(rval, "JSForInNext")) {
@@ -2618,7 +2632,9 @@ void peepholeOptimizeStackOPS(
 void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                    IridiumSEXP *currStmt) {
   // printf("stmt_type=%s\n",currStmt->tag);
-  if (isTag(currStmt, "GWrite")) {
+  if (isTag(currStmt, "NIPCatchCTX")) {
+    pushOP(ctx, instructions, OP_nip_catch);
+  } else if (isTag(currStmt, "GWrite")) {
     bool isStrict = !hasFlag(currStmt, "SLOPPY");
     bool tainted = hasFlag(currStmt, "TAINTED");
     bool safe = hasFlag(currStmt, "SAFE");
