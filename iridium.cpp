@@ -1,3 +1,5 @@
+#include "quickjs-libc.h"
+#include <stdexcept>
 #include <stdio.h>
 #include <stdlib.h>
 extern "C" {
@@ -27,13 +29,7 @@ extern "C" {
 
 using json = nlohmann::json;
 
-
-enum IridiumDataType {
-    NUMBER,
-    STRING,
-    BOOLEAN,
-    NULLPTR
-};
+enum IridiumDataType { NUMBER, STRING, BOOLEAN, NULLPTR };
 
 struct IridiumFlag {
   std::string name;
@@ -202,21 +198,21 @@ IridiumSEXP *parseIridiumSEXP(const json &node);
 void populateArgs(IridiumSEXP *res, const json &args) {
   res->numArgs = args.size();
   // Switch to `new` instead of `malloc` for C++ object initialization
-  res->args = new IridiumSEXP*[res->numArgs];
+  res->args = new IridiumSEXP *[res->numArgs];
 
   int idx = 0;
   // Range-based for loop completely eliminates linked-list traversal!
-  for (const auto& arg : args) {
+  for (const auto &arg : args) {
     res->args[idx++] = parseIridiumSEXP(arg);
   }
 }
 
 void populateFlags(IridiumSEXP *res, const json &flags) {
   res->numFlags = flags.size();
-  res->flags = new IridiumFlag*[res->numFlags];
+  res->flags = new IridiumFlag *[res->numFlags];
 
   int idx = 0;
-  for (const auto& flag : flags) {
+  for (const auto &flag : flags) {
     if (!flag.is_array() || flag.size() != 2) {
       fprintf(stderr, "Expected flag array size to be 2\n");
       exit(1);
@@ -227,7 +223,7 @@ void populateFlags(IridiumSEXP *res, const json &flags) {
 
     // Array access by index [0] and [1]
     currFlag->name = flag[0].get<std::string>();
-    const auto& flagVal = flag[1];
+    const auto &flagVal = flag[1];
 
     if (flagVal.is_boolean()) {
       currFlag->boolean_val = flagVal.get<bool>();
@@ -236,7 +232,8 @@ void populateFlags(IridiumSEXP *res, const json &flags) {
       currFlag->number_val = flagVal.get<double>();
       currFlag->datatype = NUMBER;
     } else if (flagVal.is_string()) {
-      currFlag->string_val = flagVal.get<std::string>(); // Null-safe extraction!
+      currFlag->string_val =
+          flagVal.get<std::string>(); // Null-safe extraction!
       currFlag->datatype = STRING;
     } else if (flagVal.is_null()) {
       currFlag->datatype = NULLPTR;
@@ -247,7 +244,8 @@ void populateFlags(IridiumSEXP *res, const json &flags) {
   }
 }
 
-IridiumSEXP *parseNode(const std::string &tag, const json &args, const json &flags) {
+IridiumSEXP *parseNode(const std::string &tag, const json &args,
+                       const json &flags) {
   IridiumSEXP *res = new IridiumSEXP;
   res->tag = tag;
   populateArgs(res, args);
@@ -273,8 +271,8 @@ IridiumSEXP *parseIridiumSEXP(const json &node) {
   }
 
   std::string tag = node[0].get<std::string>();
-  const auto& args = node[1];
-  const auto& flags = node[2];
+  const auto &args = node[1];
+  const auto &flags = node[2];
 
   // Pre-Assertions
   if (!args.is_array()) {
@@ -610,11 +608,11 @@ void pushOPConst(JSContext *ctx, vector<BCInstruction> &instructions,
 
 // ============== Flag Related ============== //
 
-bool isTag(IridiumSEXP *node, const std::string& tag) {
+bool isTag(IridiumSEXP *node, const std::string &tag) {
   return node->tag == tag;
 }
 
-void ensureTag(IridiumSEXP *node, const std::string& tag) {
+void ensureTag(IridiumSEXP *node, const std::string &tag) {
   if (!isTag(node, tag)) {
     // std::cerr handles std::string natively, unlike fprintf
     std::cerr << "Expected tag " << tag << ", found " << node->tag << "\n";
@@ -622,7 +620,7 @@ void ensureTag(IridiumSEXP *node, const std::string& tag) {
   }
 }
 
-bool hasFlag(IridiumSEXP *node, const std::string& flagToCheck) {
+bool hasFlag(IridiumSEXP *node, const std::string &flagToCheck) {
   for (int i = 0; i < node->numFlags; i++) {
     IridiumFlag *flag = node->flags[i];
     if (flag->name == flagToCheck) // No more strcmp!
@@ -631,24 +629,25 @@ bool hasFlag(IridiumSEXP *node, const std::string& flagToCheck) {
   return false;
 }
 
-void ensureFlag(IridiumSEXP *node, const std::string& flag) {
+void ensureFlag(IridiumSEXP *node, const std::string &flag) {
   if (!hasFlag(node, flag)) {
     std::cerr << "Expected flag " << flag << " not found\n";
     exit(1);
   }
 }
 
-IridiumFlag *getFlag(IridiumSEXP *node, const std::string& flagToCheck) {
+IridiumFlag *getFlag(IridiumSEXP *node, const std::string &flagToCheck) {
   for (int i = 0; i < node->numFlags; i++) {
     IridiumFlag *flag = node->flags[i];
     if (flag->name == flagToCheck)
       return flag;
   }
   std::cerr << "Failed to get flag, " << flagToCheck << " not found\n";
+  throw std::runtime_error("Failed to get flag, " + flagToCheck + " not found\n");
   exit(1);
 }
 
-int getFlagNumber(IridiumSEXP *binding, const std::string& flagName) {
+int getFlagNumber(IridiumSEXP *binding, const std::string &flagName) {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == NUMBER) {
     return static_cast<int>(flag->number_val); // Cast double to int
@@ -657,7 +656,7 @@ int getFlagNumber(IridiumSEXP *binding, const std::string& flagName) {
   exit(1);
 }
 
-double getFlagDouble(IridiumSEXP *binding, const std::string& flagName) {
+double getFlagDouble(IridiumSEXP *binding, const std::string &flagName) {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == NUMBER) {
     return flag->number_val;
@@ -688,7 +687,8 @@ char *getFlagString(IridiumSEXP *binding, const char *flagName) {
 // Returns a const reference to the full std::string.
 // Use this for RegExp and strings that might contain \0.
 // ---------------------------------------------------------
-const std::string& getFlagStdString(IridiumSEXP *binding, const std::string& flagName) {
+const std::string &getFlagStdString(IridiumSEXP *binding,
+                                    const std::string &flagName) {
   IridiumFlag *flag = getFlag(binding, flagName);
 
   if (flag->datatype == STRING) {
@@ -698,7 +698,7 @@ const std::string& getFlagStdString(IridiumSEXP *binding, const std::string& fla
   exit(1);
 }
 
-bool getFlagBoolean(IridiumSEXP *binding, const std::string& flagName) {
+bool getFlagBoolean(IridiumSEXP *binding, const std::string &flagName) {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == BOOLEAN) {
     return flag->boolean_val;
@@ -707,7 +707,7 @@ bool getFlagBoolean(IridiumSEXP *binding, const std::string& flagName) {
   exit(1);
 }
 
-int getFlagNull(IridiumSEXP *binding, const std::string& flagName) {
+int getFlagNull(IridiumSEXP *binding, const std::string &flagName) {
   IridiumFlag *flag = getFlag(binding, flagName);
   if (flag->datatype == NULLPTR) {
     return 0;
@@ -1040,7 +1040,33 @@ void handleComputedFieldWrite(JSContext *ctx,
 
 void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
                   IridiumSEXP *rval, bool safeRead) {
-  if (isTag(rval, "JSForInStart")) {
+  if (isTag(rval, "JSCTX")) {
+    int OPID = getFlagNumber(rval, "OPID");
+    switch (OPID) {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6: {
+      return pushOP8(ctx, instructions, OP_special_object, OPID);
+    }
+    case 7:
+    case 8: {
+      assert(rval->numArgs == 1);
+      lowerToStack(ctx, instructions, rval->args[0]);
+      return pushOP(ctx, instructions, OP_get_super);
+    }
+    case 9: {
+      return pushOP(ctx, instructions, OP_push_this);
+    }
+    default:
+      fprintf(stderr, "TODO: OPID: %d for JSCTX\n", OPID);
+      exit(1);
+      break;
+    }
+  } else if (isTag(rval, "JSForInStart")) {
     // Push obj onto the stack
     lowerToStack(ctx, instructions, rval->args[0]);
 
@@ -1065,32 +1091,32 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     return pushOP32(ctx, instructions, OP_push_atom_value, strAtom);
   } else if (isTag(rval, "RegExp")) {
     std::string exp = getFlagStdString(rval, "EXP");
-      std::string flags = getFlagStdString(rval, "FLAGS");
+    std::string flags = getFlagStdString(rval, "FLAGS");
 
-      // // ==========================================
-      // // DEBUG: Print RegExp Pattern Bytes
-      // // ==========================================
-      // fprintf(stderr, "[DEBUG RegExp] Pattern Length: %zu\n", exp.size());
-      // fprintf(stderr, "[DEBUG RegExp] Pattern Bytes: ");
-      // for (size_t i = 0; i < exp.size(); i++) {
-      //     fprintf(stderr, "%02X ", (unsigned char)exp[i]);
-      // }
-      // fprintf(stderr, "\n");
-      // // ==========================================
+    // // ==========================================
+    // // DEBUG: Print RegExp Pattern Bytes
+    // // ==========================================
+    // fprintf(stderr, "[DEBUG RegExp] Pattern Length: %zu\n", exp.size());
+    // fprintf(stderr, "[DEBUG RegExp] Pattern Bytes: ");
+    // for (size_t i = 0; i < exp.size(); i++) {
+    //     fprintf(stderr, "%02X ", (unsigned char)exp[i]);
+    // }
+    // fprintf(stderr, "\n");
+    // // ==========================================
 
-      JSValue expValue = JS_NewStringLen(ctx, exp.data(), exp.size());
-      JSValue flagsValue = JS_NewStringLen(ctx, flags.data(), flags.size());
+    JSValue expValue = JS_NewStringLen(ctx, exp.data(), exp.size());
+    JSValue flagsValue = JS_NewStringLen(ctx, flags.data(), flags.size());
 
-      pushOPConst(ctx, instructions, OP_push_const, expValue);
+    pushOPConst(ctx, instructions, OP_push_const, expValue);
 
-      if (!ctx->compile_regexp) {
-        fprintf(stderr, "RegExp compiler not found in the context\n");
-        exit(1);
-      }
-      JSValue compiledRegexp = ctx->compile_regexp(ctx, expValue, flagsValue);
-      pushOPConst(ctx, instructions, OP_push_const, compiledRegexp);
-      return pushOP(ctx, instructions, OP_regexp);
-    } else if (isTag(rval, "JSTemplate")) {
+    if (!ctx->compile_regexp) {
+      fprintf(stderr, "RegExp compiler not found in the context\n");
+      exit(1);
+    }
+    JSValue compiledRegexp = ctx->compile_regexp(ctx, expValue, flagsValue);
+    pushOPConst(ctx, instructions, OP_push_const, compiledRegexp);
+    return pushOP(ctx, instructions, OP_regexp);
+  } else if (isTag(rval, "JSTemplate")) {
     pushOP(ctx, instructions, OP_push_empty_string);
     JSAtom fieldAtom = JS_NewAtom(ctx, "concat");
     pushOP32(ctx, instructions, OP_get_field2, fieldAtom);
@@ -2631,61 +2657,195 @@ void peepholeOptimizeStackOPS(
 
 void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                    IridiumSEXP *currStmt) {
+  // std::cout << "stmt_type: " << currStmt->tag << std::endl;
   // printf("stmt_type=%s\n",currStmt->tag);
   if (isTag(currStmt, "NIPCatchCTX")) {
     pushOP(ctx, instructions, OP_nip_catch);
   } else if (isTag(currStmt, "GWrite")) {
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-    bool tainted = hasFlag(currStmt, "TAINTED");
-    bool safe = hasFlag(currStmt, "SAFE");
-    bool thisInit = false;
+    // "INIT", "SAFE", "DECLVAR", "DECLFUN"
+    bool INIT = hasFlag(currStmt, "INIT");
+    bool DECLVAR = hasFlag(currStmt, "DECLVAR");
+    bool DECLFUN = hasFlag(currStmt, "DECLFUN");
 
-    if (tainted) {
-      fprintf(stderr, "TODO: handle tainted GWrites\n");
-      exit(1);
-    }
     IridiumSEXP *loc = currStmt->args[0];
+    ensureTag(loc, "GlobalBinding");
     IridiumSEXP *rval = currStmt->args[1];
+    char *name = getFlagString(loc, "NAME");
 
-    lowerToStack(ctx, instructions, rval);
-    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
+    if (DECLVAR) {
+      uint8_t check_flag = 0, define_flag = 0;
+
+#define DEFINE_GLOBAL_LEX_VAR (1 << 7)
+#define DEFINE_GLOBAL_FUNC_VAR (1 << 6)
+
+      if (hasFlag(loc, "JSLET")) {
+        check_flag |= DEFINE_GLOBAL_LEX_VAR;
+        define_flag |= DEFINE_GLOBAL_LEX_VAR;
+        define_flag |= JS_PROP_WRITABLE;
+      } else if (hasFlag(loc, "JSCONST")) {
+        check_flag |= DEFINE_GLOBAL_LEX_VAR;
+        define_flag |= DEFINE_GLOBAL_LEX_VAR;
+      } else if (hasFlag(loc, "JSVAR")) {
+        // Redundant...
+        check_flag = 0;
+        check_flag = 0;
+      } else {
+        fprintf(stderr, "TODO: JSSloppyDecl invalid flag config\n");
+        exit(1);
+      }
+
+      pushOP32Flags(ctx, instructions, OP_check_define_var,
+                    JS_NewAtom(ctx, name), check_flag);
+      pushOP32Flags(ctx, instructions, OP_define_var, JS_NewAtom(ctx, name),
+                    define_flag);
+    } else if (DECLFUN) {
+      pushOP32Flags(ctx, instructions, OP_check_define_var,
+                    JS_NewAtom(ctx, name), 64);
+      lowerToStack(ctx, instructions, rval);
+      pushOP32Flags(ctx, instructions, OP_define_func, JS_NewAtom(ctx, name),
+                    0);
+    } else if (INIT) {
+      lowerToStack(ctx, instructions, rval);
+      pushOP32(ctx, instructions, OP_put_var_init, JS_NewAtom(ctx, name));
+    } else {
+      lowerToStack(ctx, instructions, rval);
+      pushOP32(ctx, instructions, OP_put_var, JS_NewAtom(ctx, name));
+    }
   } else if (isTag(currStmt, "LWrite")) {
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-    // bool tainted = false;
-    bool safe = hasFlag(currStmt, "SAFE");
-    bool thisInit = hasFlag(currStmt, "THISINIT");
+    // "INIT", "SAFE", "THISINIT"
+    bool INIT = hasFlag(currStmt, "INIT");
+    bool SAFE = hasFlag(currStmt, "SAFE");
+    bool THISINIT = hasFlag(currStmt, "THISINIT");
 
     IridiumSEXP *loc = currStmt->args[0];
+    ensureTag(loc, "EnvBinding");
+    int refIDX = getFlagNumber(loc, "REFIDX");
     IridiumSEXP *rval = currStmt->args[1];
 
     lowerToStack(ctx, instructions, rval);
-    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
-  } else if (isTag(currStmt, "RWrite")) {
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-    bool tainted = hasFlag(currStmt, "TAINTED");
-    bool safe = hasFlag(currStmt, "SAFE");
-    bool thisInit = hasFlag(currStmt, "THISINIT");
 
-    if (tainted) {
-      fprintf(stderr, "TODO: handle tainted RWrite\n");
+    if (hasFlag(loc, "JSARG")) {
+      assert(refIDX > -1);
+
+      // === SPECIALIZATION ===
+      switch (refIDX) {
+      case 0:
+        return pushOP(ctx, instructions, OP_put_arg0);
+        break;
+      case 1:
+        return pushOP(ctx, instructions, OP_put_arg1);
+        break;
+      case 2:
+        return pushOP(ctx, instructions, OP_put_arg2);
+        break;
+      case 3:
+        return pushOP(ctx, instructions, OP_put_arg3);
+        break;
+      default:
+        return pushOP16(ctx, instructions, OP_put_arg, refIDX);
+      }
+    }
+
+    if (hasFlag(loc, "JSRESTARG")) {
+      fprintf(stderr, "TODO: handle stores to JSRESTARG");
       exit(1);
     }
+
+    if (THISINIT) {
+      return pushOP16(ctx, instructions, OP_put_loc_check_init, refIDX);
+    }
+
+    if (!INIT && hasFlag(loc, "JSCONST")) {
+      pushOP(ctx, instructions, OP_drop);
+      return pushOP32Flags(ctx, instructions, OP_throw_error,
+                           JS_NewAtom(ctx, getFlagString(loc, "NAME")), 0);
+    }
+
+    if (SAFE || INIT) {
+      // === SPECIALIZATION ===
+      switch (refIDX) {
+      case 0:
+        return pushOP(ctx, instructions, OP_put_loc0);
+      case 1:
+        return pushOP(ctx, instructions, OP_put_loc1);
+      case 2:
+        return pushOP(ctx, instructions, OP_put_loc2);
+      case 3:
+        return pushOP(ctx, instructions, OP_put_loc3);
+      default: {
+        if (refIDX < 256) {
+          return pushOP8(ctx, instructions, OP_put_loc8, refIDX);
+        } else {
+          return pushOP16(ctx, instructions, OP_put_loc, refIDX);
+        }
+      }
+      }
+    } else {
+      return pushOP16(ctx, instructions, OP_put_loc_check, refIDX);
+    }
+  } else if (isTag(currStmt, "RWrite") || isTag(currStmt, "MWrite")) {
+    // "INIT", "SAFE", "THISINIT"
+    bool INIT = hasFlag(currStmt, "INIT");
+    bool SAFE = hasFlag(currStmt, "SAFE");
+    bool THISINIT = hasFlag(currStmt, "THISINIT");
+
     IridiumSEXP *loc = currStmt->args[0];
+    ensureTag(loc, "RemoteEnvBinding");
+    int refIDX = getFlagNumber(loc, "REFIDX");
     IridiumSEXP *rval = currStmt->args[1];
+    IridiumSEXP *resolvedBinding;
+    {
+      resolvedBinding = loc->args[0];
+      while (isTag(resolvedBinding, "RemoteEnvBinding")) {
+        resolvedBinding = resolvedBinding->args[0];
+      }
+
+      ensureTag(resolvedBinding, "EnvBinding");
+    }
+
 
     lowerToStack(ctx, instructions, rval);
-    storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict, false);
-  }
-  else if (isTag(currStmt, "EnvWrite")) {
+
+    if (THISINIT) {
+      return pushOP16(ctx, instructions, OP_put_var_ref_check_init, refIDX);
+    }
+
+    if (!INIT && hasFlag(resolvedBinding, "JSCONST")) {
+      pushOP(ctx, instructions, OP_drop);
+      return pushOP32Flags(
+          ctx, instructions, OP_throw_error,
+          JS_NewAtom(ctx, getFlagString(resolvedBinding, "NAME")), 0);
+    }
+
+    if (SAFE || INIT) {
+      switch (refIDX) {
+      case 0:
+        return pushOP(ctx, instructions, OP_put_var_ref0);
+        break;
+      case 1:
+        return pushOP(ctx, instructions, OP_put_var_ref1);
+        break;
+      case 2:
+        return pushOP(ctx, instructions, OP_put_var_ref2);
+        break;
+      case 3:
+        return pushOP(ctx, instructions, OP_put_var_ref3);
+        break;
+      }
+
+      return pushOP16(ctx, instructions, OP_put_var_ref, refIDX);
+    } else {
+      return pushOP16(ctx, instructions, OP_put_var_ref_check, refIDX);
+    }
+
+  } else if (isTag(currStmt, "EnvWrite")) {
     fprintf(stderr, "TODO: Unexpected EnvWrite in STMT (deprecated)\n");
     exit(1);
     // handleEnvWrite(ctx, instructions, currStmt, false);
   } else if (isTag(currStmt, "JSSuperFieldWrite") ||
              isTag(currStmt, "JSComputedFieldWrite") ||
              isTag(currStmt, "FieldWrite") ||
-             isTag(currStmt, "JSPrivateFieldWrite")
-            )
-  {
+             isTag(currStmt, "JSPrivateFieldWrite")) {
     // throw std::runtime_error(
     //     "Unexpected Field Write and JSComputedFieldWrite outside stack ops");
     lowerToStack(ctx, instructions, currStmt);
@@ -2702,7 +2862,8 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     return;
   } else if (isTag(currStmt, "StackReject")) {
     if (isTag(currStmt->args[0], "EnvWrite")) {
-      fprintf(stderr, "TODO: Unexpected EnvWrite in StackReject-STMT (deprecated)\n");
+      fprintf(stderr,
+              "TODO: Unexpected EnvWrite in StackReject-STMT (deprecated)\n");
       exit(1);
       // handleEnvWrite(ctx, instructions, currStmt->args[0], false);
       // return;
@@ -2914,63 +3075,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
   } else if (isTag(currStmt, "NOP")) {
     return;
   } else if (isTag(currStmt, "JSImplicitBindingDeclaration")) {
-    int OPID = getFlagNumber(currStmt, "OPID");
-    bool safe = getFlagBoolean(currStmt, "SAFE");
-    bool thisInit = getFlagBoolean(currStmt, "THISINIT");
-    bool isStrict = !hasFlag(currStmt, "SLOPPY");
-    switch (OPID) {
-    case 0:
-    case 1:
-    case 2:
-    case 3:
-    case 4:
-    case 5:
-    case 6: {
-      pushOP8(ctx, instructions, OP_special_object, OPID);
-      IridiumSEXP *loc = currStmt->args[0];
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict,
-                              false);
-      break;
-    }
-    case 7:
-    case 8: {
-      IridiumSEXP *loc = currStmt->args[0];
-      IridiumSEXP *args = currStmt->args[1];
-      ensureTag(args, "List");
-      assert(args->numArgs == 1);
-      lowerToStack(ctx, instructions, args->args[0]);
-      pushOP(ctx, instructions, OP_get_super);
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict,
-                              false);
-      break;
-    }
-    case 9: {
-      pushOP(ctx, instructions, OP_push_this);
-      IridiumSEXP *loc = currStmt->args[0];
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict,
-                              false);
-      break;
-    }
-    case 10: {
-      pushOPConst(ctx, instructions, OP_push_const, JS_UNINITIALIZED);
-      IridiumSEXP *loc = currStmt->args[0];
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict,
-                              false);
-      break;
-    }
-    case 11: {
-      pushOP(ctx, instructions, OP_undefined);
-      IridiumSEXP *loc = currStmt->args[0];
-      storeWhatevesOnTheStack(ctx, loc, instructions, safe, thisInit, isStrict,
-                              false);
-      break;
-    }
-    default:
-      fprintf(stderr, "TODO: OPID: %d for JSImplicitBindingDeclaration\n",
-              OPID);
-      exit(1);
-      break;
-    }
+    fprintf(stderr, "Deprecated JSImplicitBindingDeclaration\n");
     return;
   } else if (isTag(currStmt, "JSInitialYield")) {
     return pushOP(ctx, instructions, OP_initial_yield);
@@ -2980,26 +3085,29 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, currStmt->args[0]);
     pushOP(ctx, instructions, OP_yield);
 
-    IridiumSEXP *stackLocation = currStmt->args[1];
-    int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding")) {
-      pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
-    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
-      pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
-    } else {
-      fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
-    }
+    // IridiumSEXP *stackLocation = currStmt->args[1];
+    // int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    // if (isTag(stackLocation, "EnvBinding")) {
+    //   pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
+    // } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+    //   pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
+    // } else {
+    //   fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
+    // }
 
-    stackLocation = currStmt->args[2];
-    stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    if (isTag(stackLocation, "EnvBinding")) {
-      pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
-    } else if (isTag(stackLocation, "RemoteEnvBinding")) {
-      pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
-    } else {
-      fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
-    }
+    // stackLocation = currStmt->args[2];
+    // stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
+    // if (isTag(stackLocation, "EnvBinding")) {
+    //   pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
+    // } else if (isTag(stackLocation, "RemoteEnvBinding")) {
+    //   pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
+    // } else {
+    //   fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
+    // }
   } else if (isTag(currStmt, "JSSloppyDecl")) {
+    fprintf(stderr, "Deprecated JSSloppyDecl\n");
+    exit(1);
+
     uint8_t check_flag = 0, define_flag = 0;
 
 #define DEFINE_GLOBAL_LEX_VAR (1 << 7)
@@ -3029,6 +3137,9 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
 
     return;
   } else if (isTag(currStmt, "JSSloppyFuncDecl")) {
+    fprintf(stderr, "Deprecated JSSloppyDecl\n");
+    exit(1);
+
     IridiumSEXP *loc = currStmt->args[0];
     IridiumSEXP *closure = currStmt->args[1];
 
@@ -3537,6 +3648,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer,
   bool isStrict = hasFlag(bbContainer, "STRICT");
 
   IridiumSEXP *bindingsSEXP = bbContainer->args[0];
+  ensureTag(bindingsSEXP, "Bindings");
   IridiumSEXP *localBindingsSEXP = bindingsSEXP->args[0];
   IridiumSEXP *remoteBindingsSEXP = bindingsSEXP->args[1];
   IridiumSEXP *lambdasSEXP = bindingsSEXP->args[2];
@@ -3651,7 +3763,7 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer,
 
     // int refIDX = getFlagNumber(envBinding, "REFIDX");
     // assert(refIDX == i && "Local VarDef idx not found");
-    int scope_level = getFlagNumber(envBinding, "Scope");
+    int scope_level = getFlagNumber(envBinding, "SCOPE");
     int scope_next =
         hasFlag(envBinding, "NEXT") ? getFlagNumber(envBinding, "NEXT") : -1;
     char *name = getFlagString(envBinding, "NAME");
@@ -3687,46 +3799,60 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer,
     IridiumSEXP *remoteBinding = remoteBindingsSEXP->args[i];
     ensureTag(remoteBinding, "RemoteEnvBinding");
 
-    IridiumSEXP *next = remoteBinding->args[0];
-    int refIDX = getFlagNumber(next, "REFIDX");
+    // MODULE | MODULEI | MODULENSI
+    bool MODULE    = hasFlag(remoteBinding, "MODULE");
+    bool MODULEI   = hasFlag(remoteBinding, "MODULEI");
+    bool MODULENSI = hasFlag(remoteBinding, "MODULENSI");
+    int depth      = 0;
 
-    b->closure_var[i].is_local = true;
+    IridiumSEXP *resolvedBinding = remoteBinding->args[0];
+    int  REFIDX    = getFlagNumber(resolvedBinding, "REFIDX");
 
-    while (isTag(next, "RemoteEnvBinding")) {
-      b->closure_var[i].is_local = false;
-      next = next->args[0];
+    while (isTag(resolvedBinding, "RemoteEnvBinding")) {
+      depth++;
+      resolvedBinding = resolvedBinding->args[0];
     }
+    ensureTag(resolvedBinding, "EnvBinding");
 
-    ensureTag(next, "EnvBinding");
-    IridiumSEXP *envBinding = next;
-    char *name = getFlagString(envBinding, "NAME");
+    int  VARIDX    = getFlagNumber(resolvedBinding, "REFIDX");
+    char *name     = getFlagString(resolvedBinding, "NAME");
+    bool JSARG     = hasFlag(resolvedBinding, "JSARG");
+    bool JSRESTARG = hasFlag(resolvedBinding, "JSRESTARG");
+    bool JSLET     = hasFlag(resolvedBinding, "JSLET");
+    bool JSCONST   = hasFlag(resolvedBinding, "JSCONST");
+    bool JSVAR     = hasFlag(resolvedBinding, "JSVAR");
 
-    b->closure_var[i].is_arg = false;
-    b->closure_var[i].is_const = false;
-    b->closure_var[i].is_lexical = false;
-    b->closure_var[i].var_kind = JS_VAR_NORMAL;
-    b->closure_var[i].var_idx = refIDX;
-    b->closure_var[i].var_name = JS_NewAtom(ctx, name);
-
-    if (hasFlag(envBinding, "JSARG") || hasFlag(envBinding, "JSRESTARG")) {
-      b->closure_var[i].is_arg = true;
-    } else if (hasFlag(envBinding, "JSLET") || hasFlag(envBinding, "JSVAR")) {
-      // NONE
-    } else if (hasFlag(envBinding, "JSCONST")) {
-      b->closure_var[i].is_const = true;
-    } else {
-      fprintf(stderr, "Valid flag not found...");
-      exit(1);
-    }
-
-    // If marked as namespace import
-    if (hasFlag(remoteBinding, "NSIMPORT")) {
+    if (MODULE) {
       b->closure_var[i].is_local = true;
       b->closure_var[i].is_arg = false;
-      b->closure_var[i].is_const = true;
-      b->closure_var[i].is_lexical = true;
+      b->closure_var[i].is_const = JSCONST;
+      b->closure_var[i].is_lexical = JSLET || JSVAR;
       b->closure_var[i].var_kind = JS_VAR_NORMAL;
-      b->closure_var[i].var_idx = refIDX;
+      b->closure_var[i].var_idx = VARIDX;
+      b->closure_var[i].var_name = JS_NewAtom(ctx, name);
+    } else if (MODULEI) {
+      b->closure_var[i].is_local = false;
+      b->closure_var[i].is_arg = false;
+      b->closure_var[i].is_const = JSCONST;
+      b->closure_var[i].is_lexical = JSLET || JSVAR;
+      b->closure_var[i].var_kind = JS_VAR_NORMAL;
+      b->closure_var[i].var_idx = VARIDX;
+      b->closure_var[i].var_name = JS_NewAtom(ctx, name);
+    } else if (MODULENSI) {
+      b->closure_var[i].is_local = true;
+      b->closure_var[i].is_arg = false;
+      b->closure_var[i].is_const = JSCONST;
+      b->closure_var[i].is_lexical = JSLET || JSVAR;
+      b->closure_var[i].var_kind = JS_VAR_NORMAL;
+      b->closure_var[i].var_idx = VARIDX;
+      b->closure_var[i].var_name = JS_NewAtom(ctx, name);
+    } else {
+      b->closure_var[i].is_local = depth == 0;
+      b->closure_var[i].is_arg = JSARG || JSRESTARG;
+      b->closure_var[i].is_const = JSCONST;
+      b->closure_var[i].is_lexical = JSLET || JSVAR;
+      b->closure_var[i].var_kind = JS_VAR_NORMAL;
+      b->closure_var[i].var_idx = REFIDX;
       b->closure_var[i].var_name = JS_NewAtom(ctx, name);
     }
   }
@@ -4147,7 +4273,7 @@ typedef struct IridiumLoadResult {
   void *ptr;
 } IridiumLoadResult;
 
-IridiumLoadResult compile_iri_module(JSContext *ctx, json & j) {
+IridiumLoadResult compile_iri_module(JSContext *ctx, json &j) {
   // 1. Combine existence and type-checking effortlessly
   if (!j.contains("iridium") || !j["iridium"].is_array()) {
     fprintf(stderr, "Expected the 'iridium' key to be an array...\n");
@@ -4193,16 +4319,16 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, json & j) {
   // b->filename = JS_NewAtom(ctx, cJSON_GetStringValue(absoluteFilePath));
   // 2. Safely extract the string (also checking it exists and is a string)
   if (!j.contains("absoluteFilePath") || !j["absoluteFilePath"].is_string()) {
-      fprintf(stderr, "Expected 'absoluteFilePath' to be a string...\n");
-      exit(1);
+    fprintf(stderr, "Expected 'absoluteFilePath' to be a string...\n");
+    exit(1);
   }
 
   // Store it in a std::string so the memory is safely managed
   std::string absoluteFilePath = j["absoluteFilePath"].get<std::string>();
 
   // 3. Execute the file using the .c_str() method to satisfy QuickJS's C-API
-  JSModuleDef *m = js_new_module_def(
-      ctx, JS_NewAtom(ctx, absoluteFilePath.c_str()));
+  JSModuleDef *m =
+      js_new_module_def(ctx, JS_NewAtom(ctx, absoluteFilePath.c_str()));
 
   // Bytecode container gets the filename
   b->filename = JS_NewAtom(ctx, absoluteFilePath.c_str());
@@ -4224,6 +4350,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, json & j) {
       IridiumSEXP *moduleRequest = moduleRequests->args[r];
       char *SOURCE = getFlagString(moduleRequest, "SOURCE");
       m->req_module_entries[r].module_name = JS_NewAtom(ctx, SOURCE);
+      m->req_module_entries[r].module = NULL;
     }
   }
 
@@ -4238,29 +4365,19 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, json & j) {
       IridiumSEXP *staticImport = staticImports->args[im];
 
       // Req Module IDX
-      int reqModuleIDX = getFlagNumber(staticImport, "REQIDX");
+      int reqModuleIDX = getFlagNumber(staticImport, "MODULEREQIDX");
 
       // Target IDX
-      IridiumSEXP *bindingTarget = staticImport->args[0];
-      ensureTag(bindingTarget, "RemoteEnvBinding");
-      int bindingTargetIDX = getFlagNumber(bindingTarget, "REFIDX");
+      IridiumSEXP *resolvedBinding = staticImport->args[0];
+      ensureTag(resolvedBinding, "RemoteEnvBinding");
+      int bindingTargetIDX = getFlagNumber(resolvedBinding, "REFIDX");
 
       // Field
-      IridiumSEXP *fieldToGet = staticImport->args[1];
-      ensureTag(fieldToGet, "String");
-
-      char *fieldName = getFlagString(fieldToGet, "IridiumPrimitive");
+      char *fieldName = getFlagString(staticImport, "FIELD");
 
       m->import_entries[im].var_idx = bindingTargetIDX;
       m->import_entries[im].import_name = JS_NewAtom(ctx, fieldName);
       m->import_entries[im].req_module_idx = reqModuleIDX;
-
-      if (!hasFlag(bindingTarget, "NSIMPORT")) {
-        // This needs to be set to false if the import is not a namespace
-        // import, this is a mess!!
-        b->closure_var[bindingTargetIDX].is_local =
-            false; // <- This was the problem!!!!
-      }
     }
   }
 
@@ -4276,10 +4393,10 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, json & j) {
 
       if (isTag(staticExport, "NamedReexport")) {
         // Module Request IDX
-        int reqIdx = getFlagNumber(staticExport, "REQIDX");
+        int reqIdx = getFlagNumber(staticExport, "MODULEREQIDX");
         m->export_entries[ex].u.req_module_idx = reqIdx;
         m->export_entries[ex].export_type = JS_EXPORT_TYPE_INDIRECT;
-        m->export_entries[ex].local_name = JS_NewAtom(ctx, "*");
+        m->export_entries[ex].local_name = JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
         m->export_entries[ex].export_name =
             JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
       } else {
@@ -4308,7 +4425,7 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, json & j) {
     for (int ex = 0; ex < starExports->numArgs; ++ex) {
       IridiumSEXP *starExport = starExports->args[ex];
       // Req IDX
-      int reqIDX = getFlagNumber(starExport, "REQIDX");
+      int reqIDX = getFlagNumber(starExport, "MODULEREQIDX");
       m->star_export_entries[ex].req_module_idx = reqIDX;
     }
   }
@@ -4349,7 +4466,11 @@ void eval_iri_file(JSContext *ctx, const char *filename) {
     if (iriRes.isModule) {
       JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
 
-      JS_ResolveModule(ctx, moduleVal);
+      if (JS_ResolveModule(ctx, moduleVal) < 0) {
+          JS_FreeValue(ctx, moduleVal);
+          js_std_dump_error(ctx);
+          exit(1);
+      }
 
       auto end = std::chrono::high_resolution_clock::now();
 
@@ -4383,7 +4504,6 @@ void eval_iri_file(JSContext *ctx, const char *filename) {
       JS_FreeValue(ctx, res);
     }
   }
-
 }
 
 // void eval_iri_pika(JSContext *ctx, const char *filename)
