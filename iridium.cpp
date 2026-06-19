@@ -339,8 +339,7 @@ typedef struct BCLList {
   bool lambdaPoolReference;
   bool hasPoolData;
   JSValue poolData;
-  bool isLabel;
-  int label;
+  bool presolvedTarget;
   union {
     int8_t one;
     int16_t two;
@@ -451,37 +450,6 @@ std::unordered_map<double, GOTOINFO> *gotoContextMap = NULL;
 std::unordered_map<uint32_t, size_t> *xyzz;
 
 // ============== Push OP ============== //
-void pushLabel(JSContext *ctx, vector<BCInstruction> &instructions, int label) {
-  BCInstruction inst;
-  inst.bc = OP_nop;
-  inst.lambdaPoolReference = false;
-  inst.hasPoolData = false;
-  inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = true;
-  inst.label = label;
-  inst.valueSize = 0;
-  inst.data.four = 0;
-  inst.hasFlags = false;
-  inst.flags = 0;
-  instructions.push_back(inst);
-  return;
-}
-
-// void push8(JSContext *ctx, vector<BCInstruction> &instructions, uint8_t
-// opcode)
-// {
-//   BCInstruction inst;
-//   inst.bc = opcode;
-//   inst.lambdaPoolReference = false;
-//   inst.hasPoolData = false;
-//   inst.poolData = JS_UNINITIALIZED;
-//   inst.isLabel = false;
-//   inst.label = 0;
-//   inst.valueSize = 0;
-//   inst.data.four = 0;
-//   instructions.push_back(inst);
-//   return;
-// }
 
 void pushOP(JSContext *ctx, vector<BCInstruction> &instructions,
             OPCodeEnum opcode) {
@@ -490,8 +458,7 @@ void pushOP(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = false;
   inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 0;
   inst.data.four = 0;
   inst.hasFlags = false;
@@ -507,8 +474,7 @@ void pushOPFlags(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = false;
   inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 0;
   inst.data.four = 0;
   inst.hasFlags = true;
@@ -524,8 +490,7 @@ void pushOP8(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = false;
   inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 1;
   inst.data.one = data;
   inst.hasFlags = false;
@@ -543,8 +508,7 @@ void pushOP16(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = false;
   inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 2;
   inst.data.two = data;
   inst.hasFlags = false;
@@ -560,8 +524,7 @@ void pushOP32(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = false;
   inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 4;
   inst.data.four = data;
   inst.hasFlags = false;
@@ -577,8 +540,7 @@ void pushOP32Flags(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = false;
   inst.poolData = JS_UNINITIALIZED;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 4;
   inst.data.four = data;
   inst.hasFlags = true;
@@ -594,8 +556,7 @@ void pushOPConst(JSContext *ctx, vector<BCInstruction> &instructions,
   inst.lambdaPoolReference = false;
   inst.hasPoolData = true;
   inst.poolData = cData;
-  inst.isLabel = false;
-  inst.label = 0;
+  inst.presolvedTarget = false;
   inst.valueSize = 4;
   inst.data.four = 0;
   inst.hasFlags = false;
@@ -2086,12 +2047,22 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, rval->args[0]);
     lowerToStack(ctx, instructions, rval->args[1]);
     return pushOP(ctx, instructions, OP_add_brand);
-  } else if (isTag(rval, "JSCheckConstructor")) {
-    return pushOP(ctx, instructions, OP_check_ctor);
   } else if (isTag(rval, "DCTRRet")) {
+    // user_val
     lowerToStack(ctx, instructions, rval->args[0]);
     pushOP(ctx, instructions, OP_check_ctor_return);
-    return pushOP(ctx, instructions, OP_nip);
+    // user_val t/f
+    pushOP8(ctx, instructions, OP_if_false8, 1);
+    size_t ifElseTargetLoc = instructions.size() - 1;
+    instructions.back().presolvedTarget = true;
+    // ::true:
+    pushOP(ctx, instructions, OP_drop);
+    // this_val
+    lowerToStack(ctx, instructions, rval->args[1]);
+    // Determine false offset
+    for (size_t i = ifElseTargetLoc + 1; i < instructions.size(); i++) {
+      instructions[ifElseTargetLoc].data.one += short_opcode_info(instructions[i].bc).size;
+    }
   } else if (isTag(rval, "StackPop")) {
     return;
   } else if (isTag(rval, "JSForInNext")) {
@@ -2659,7 +2630,12 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                    IridiumSEXP *currStmt) {
   // std::cout << "stmt_type: " << currStmt->tag << std::endl;
   // printf("stmt_type=%s\n",currStmt->tag);
-  if (isTag(currStmt, "NIPCatchCTX")) {
+  if (isTag(currStmt, "QJSModuleInit")) {
+    pushOP(ctx, instructions, OP_push_this);
+    pushOP32(ctx, instructions, OP_if_false8, 2);
+    instructions.back().presolvedTarget = true;
+    pushOP(ctx, instructions, OP_return_undef);
+  } else if (isTag(currStmt, "NIPCatchCTX")) {
     pushOP(ctx, instructions, OP_nip_catch);
   } else if (isTag(currStmt, "GWrite")) {
     // "INIT", "SAFE", "DECLVAR", "DECLFUN"
@@ -2690,7 +2666,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
         check_flag = 0;
         check_flag = 0;
       } else {
-        fprintf(stderr, "TODO: JSSloppyDecl invalid flag config\n");
+        fprintf(stderr, "TODO: GWrite DECLVAR invalid flag config\n");
         exit(1);
       }
 
@@ -2962,10 +2938,10 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, currStmt->args[0]);
     return pushOP(ctx, instructions, OP_throw);
   }
-  // else if (isTag(currStmt, "JSCheckConstructor"))
-  // {
-  //   return pushOP(ctx, instructions, OP_check_ctor);
-  // }
+  else if (isTag(currStmt, "JSCheckConstructor"))
+  {
+    return pushOP(ctx, instructions, OP_check_ctor);
+  }
 
   // else if (isTag(currStmt, "PushForOfCatchContext"))
   // {
@@ -3074,9 +3050,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     return pushOP(ctx, instructions, OP_return_async);
   } else if (isTag(currStmt, "NOP")) {
     return;
-  } else if (isTag(currStmt, "JSImplicitBindingDeclaration")) {
-    fprintf(stderr, "Deprecated JSImplicitBindingDeclaration\n");
-    return;
   } else if (isTag(currStmt, "JSInitialYield")) {
     return pushOP(ctx, instructions, OP_initial_yield);
   } else if (isTag(currStmt, "Ret")) {
@@ -3084,77 +3057,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
   } else if (isTag(currStmt, "Yield")) {
     lowerToStack(ctx, instructions, currStmt->args[0]);
     pushOP(ctx, instructions, OP_yield);
-
-    // IridiumSEXP *stackLocation = currStmt->args[1];
-    // int stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    // if (isTag(stackLocation, "EnvBinding")) {
-    //   pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
-    // } else if (isTag(stackLocation, "RemoteEnvBinding")) {
-    //   pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
-    // } else {
-    //   fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
-    // }
-
-    // stackLocation = currStmt->args[2];
-    // stackLocationIDX = getFlagNumber(stackLocation, "REFIDX");
-    // if (isTag(stackLocation, "EnvBinding")) {
-    //   pushOP16(ctx, instructions, OP_put_loc_check, stackLocationIDX);
-    // } else if (isTag(stackLocation, "RemoteEnvBinding")) {
-    //   pushOP16(ctx, instructions, OP_put_var_ref_check, stackLocationIDX);
-    // } else {
-    //   fprintf(stderr, "YIELD: Expected a EnvBinding or RemoteEnvBinding!!");
-    // }
-  } else if (isTag(currStmt, "JSSloppyDecl")) {
-    fprintf(stderr, "Deprecated JSSloppyDecl\n");
-    exit(1);
-
-    uint8_t check_flag = 0, define_flag = 0;
-
-#define DEFINE_GLOBAL_LEX_VAR (1 << 7)
-#define DEFINE_GLOBAL_FUNC_VAR (1 << 6)
-
-    if (hasFlag(currStmt, "JSLET")) {
-      check_flag |= DEFINE_GLOBAL_LEX_VAR;
-      define_flag |= DEFINE_GLOBAL_LEX_VAR;
-      define_flag |= JS_PROP_WRITABLE;
-    } else if (hasFlag(currStmt, "JSCONST")) {
-      check_flag |= DEFINE_GLOBAL_LEX_VAR;
-      define_flag |= DEFINE_GLOBAL_LEX_VAR;
-    } else if (hasFlag(currStmt, "JSVAR")) {
-      // Redundant...
-      check_flag = 0;
-      check_flag = 0;
-    } else {
-      fprintf(stderr, "TODO: JSSloppyDecl invalid flag config\n");
-      exit(1);
-    }
-
-    char *name = getFlagString(currStmt, "NAME");
-    pushOP32Flags(ctx, instructions, OP_check_define_var, JS_NewAtom(ctx, name),
-                  check_flag);
-    pushOP32Flags(ctx, instructions, OP_define_var, JS_NewAtom(ctx, name),
-                  define_flag);
-
-    return;
-  } else if (isTag(currStmt, "JSSloppyFuncDecl")) {
-    fprintf(stderr, "Deprecated JSSloppyDecl\n");
-    exit(1);
-
-    IridiumSEXP *loc = currStmt->args[0];
-    IridiumSEXP *closure = currStmt->args[1];
-
-    if (isTag(loc, "GlobalBinding")) {
-      char *name = getFlagString(loc, "NAME");
-      pushOP32Flags(ctx, instructions, OP_check_define_var,
-                    JS_NewAtom(ctx, name), 64);
-      lowerToStack(ctx, instructions, closure);
-      pushOP32Flags(ctx, instructions, OP_define_func, JS_NewAtom(ctx, name),
-                    0);
-    } else {
-      fprintf(stderr,
-              "TODO: unhandled JSFuncDecl case, expected a GlobalBinding\n");
-      exit(1);
-    }
   } else if (isTag(currStmt, "StackToHeap")) {
     for (int i = 0; i < currStmt->numArgs; i++) {
       IridiumSEXP *envBinding = currStmt->args[i];
@@ -3272,12 +3174,14 @@ void patchGotos(vector<BCInstruction> &instructions,
     auto &inst = instructions[i];
     if (inst.bc == OP_goto || inst.bc == OP_catch || inst.bc == OP_gosub ||
         inst.bc == OP_if_true || inst.bc == OP_if_false) {
-      uint32_t iriOffset = inst.data.four;
-      if (iriOffsetMap.count(iriOffset) == 0)
-        iriOffsetMap[iriOffset] =
-            findOffset(instructions, iriOffset, iriOffsetToStartInstMap);
-      int actualOffset = iriOffsetMap[iriOffset];
-      inst.data.four = actualOffset - currOffset - 1;
+      if (!inst.presolvedTarget) {
+        uint32_t iriOffset = inst.data.four;
+        if (iriOffsetMap.count(iriOffset) == 0)
+          iriOffsetMap[iriOffset] =
+              findOffset(instructions, iriOffset, iriOffsetToStartInstMap);
+        int actualOffset = iriOffsetMap[iriOffset];
+        inst.data.four = actualOffset - currOffset - 1;
+      }
       // fprintf(stdout, "Patching offset %d to %d : %d -- %d\n", iriOffset,
       // actualOffset, currOffset, inst.data.four);
     }
