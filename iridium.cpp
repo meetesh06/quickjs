@@ -604,7 +604,8 @@ IridiumFlag *getFlag(IridiumSEXP *node, const std::string &flagToCheck) {
       return flag;
   }
   std::cerr << "Failed to get flag, " << flagToCheck << " not found\n";
-  throw std::runtime_error("Failed to get flag, " + flagToCheck + " not found\n");
+  throw std::runtime_error("Failed to get flag, " + flagToCheck +
+                           " not found\n");
   exit(1);
 }
 
@@ -1027,6 +1028,9 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
       exit(1);
       break;
     }
+  } else if (isTag(rval, "Yield")) {
+    lowerToStack(ctx, instructions, rval->args[0]);
+    pushOP(ctx, instructions, OP_yield);
   } else if (isTag(rval, "JSForInStart")) {
     // Push obj onto the stack
     lowerToStack(ctx, instructions, rval->args[0]);
@@ -1036,8 +1040,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
   } else if (isTag(rval, "JSToObject")) {
     lowerToStack(ctx, instructions, rval->args[0]);
     return pushOP(ctx, instructions, OP_to_object);
-  }
-  if (isTag(rval, "String")) {
+  } else if (isTag(rval, "String")) {
     // 1. Safely extract the full C++ string, preserving any \0 bytes
     std::string strVal = getFlagStdString(rval, "IridiumPrimitive");
 
@@ -1444,10 +1447,6 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
       pushOP(ctx, instructions, OP_put_private_field); // value
     }
     return;
-  } else if (isTag(rval, "EnvWrite")) {
-    fprintf(stderr, "TODO: Unexpected EnvWrite in RVAL (deprecated)\n");
-    exit(1);
-    // return handleEnvWrite(ctx, instructions, rval, true);
   } else if (isTag(rval, "Boolean")) {
     bool res = getFlagBoolean(rval, "IridiumPrimitive");
     if (res) {
@@ -1693,9 +1692,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
 
     pushOP(ctx, instructions, OP_define_array_el);
     return pushOP(ctx, instructions, OP_drop);
-  }
-
-  else if (isTag(rval, "JSObject")) {
+  } else if (isTag(rval, "JSObject")) {
     pushOP(ctx, instructions, OP_object);
   } else if (isTag(rval, "PoolBinding")) {
     uint32_t poolOffset = getFlagNumber(rval, "REFIDX");
@@ -2061,15 +2058,18 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, rval->args[1]);
     // Determine false offset
     for (size_t i = ifElseTargetLoc + 1; i < instructions.size(); i++) {
-      instructions[ifElseTargetLoc].data.one += short_opcode_info(instructions[i].bc).size;
+      instructions[ifElseTargetLoc].data.one +=
+          short_opcode_info(instructions[i].bc).size;
     }
   } else if (isTag(rval, "StackPop")) {
     return;
   } else if (isTag(rval, "JSForInNext")) {
     lowerToStack(ctx, instructions, rval->args[0]);
-    return pushOP(ctx, instructions, OP_for_in_next);
-  } else if (isTag(rval, "JSCopyDataProperties")) // new RVal
-  {
+    pushOP(ctx, instructions, OP_for_in_next);
+
+    // Keep 2, Nip 1
+    return keepNDropM(ctx, instructions, 2, 1);
+  } else if (isTag(rval, "JSCopyDataProperties")) {
     // exc_obj
     IridiumSEXP *exc_obj = rval->args[0];
     lowerToStack(ctx, instructions, exc_obj);
@@ -2083,7 +2083,10 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, target);
 
     // OP_copy_data_properties
-    return pushOP16(ctx, instructions, OP_copy_data_properties, 68);
+    pushOP16(ctx, instructions, OP_copy_data_properties, 68);
+
+    // Keep 1, Nip 2
+    return keepNDropM(ctx, instructions, 1, 2);
   } else if (isTag(rval, "JSAppend")) {
     lowerToStack(ctx, instructions, rval->args[0]); // tmp
     lowerToStack(ctx, instructions, rval->args[1]); // insertionIdx
@@ -2626,6 +2629,194 @@ void peepholeOptimizeStackOPS(
   }
 }
 
+void handleGWrite(JSContext *ctx, vector<BCInstruction> &instructions,
+                  IridiumSEXP *currStmt, bool skipRVAL = false) {
+  // "INIT", "SAFE", "DECLVAR", "DECLFUN"
+  bool INIT = hasFlag(currStmt, "INIT");
+  bool DECLVAR = hasFlag(currStmt, "DECLVAR");
+  bool DECLFUN = hasFlag(currStmt, "DECLFUN");
+
+  IridiumSEXP *loc = currStmt->args[0];
+  ensureTag(loc, "GlobalBinding");
+  IridiumSEXP *rval = currStmt->args[1];
+  char *name = getFlagString(loc, "NAME");
+
+  if (DECLVAR) {
+    uint8_t check_flag = 0, define_flag = 0;
+
+#define DEFINE_GLOBAL_LEX_VAR (1 << 7)
+#define DEFINE_GLOBAL_FUNC_VAR (1 << 6)
+
+    if (hasFlag(loc, "JSLET")) {
+      check_flag |= DEFINE_GLOBAL_LEX_VAR;
+      define_flag |= DEFINE_GLOBAL_LEX_VAR;
+      define_flag |= JS_PROP_WRITABLE;
+    } else if (hasFlag(loc, "JSCONST")) {
+      check_flag |= DEFINE_GLOBAL_LEX_VAR;
+      define_flag |= DEFINE_GLOBAL_LEX_VAR;
+    } else if (hasFlag(loc, "JSVAR")) {
+      // Redundant...
+      check_flag = 0;
+      check_flag = 0;
+    } else {
+      fprintf(stderr, "TODO: GWrite DECLVAR invalid flag config\n");
+      exit(1);
+    }
+
+    pushOP32Flags(ctx, instructions, OP_check_define_var, JS_NewAtom(ctx, name),
+                  check_flag);
+    pushOP32Flags(ctx, instructions, OP_define_var, JS_NewAtom(ctx, name),
+                  define_flag);
+  } else if (DECLFUN) {
+    pushOP32Flags(ctx, instructions, OP_check_define_var, JS_NewAtom(ctx, name),
+                  64);
+    if (skipRVAL == false)
+      lowerToStack(ctx, instructions, rval);
+    pushOP32Flags(ctx, instructions, OP_define_func, JS_NewAtom(ctx, name), 0);
+  } else if (INIT) {
+    if (skipRVAL == false)
+      lowerToStack(ctx, instructions, rval);
+    pushOP32(ctx, instructions, OP_put_var_init, JS_NewAtom(ctx, name));
+  } else {
+    if (skipRVAL == false)
+      lowerToStack(ctx, instructions, rval);
+    pushOP32(ctx, instructions, OP_put_var, JS_NewAtom(ctx, name));
+  }
+}
+
+void handleLWrite(JSContext *ctx, vector<BCInstruction> &instructions,
+                  IridiumSEXP *currStmt, bool skipRVAL = false) {
+  // "INIT", "SAFE", "THISINIT"
+  bool INIT = hasFlag(currStmt, "INIT");
+  bool SAFE = hasFlag(currStmt, "SAFE");
+  bool THISINIT = hasFlag(currStmt, "THISINIT");
+
+  IridiumSEXP *loc = currStmt->args[0];
+  ensureTag(loc, "EnvBinding");
+  int refIDX = getFlagNumber(loc, "REFIDX");
+  IridiumSEXP *rval = currStmt->args[1];
+
+  if (skipRVAL == false)
+    lowerToStack(ctx, instructions, rval);
+
+  if (hasFlag(loc, "JSARG")) {
+    assert(refIDX > -1);
+
+    // === SPECIALIZATION ===
+    switch (refIDX) {
+    case 0:
+      return pushOP(ctx, instructions, OP_put_arg0);
+      break;
+    case 1:
+      return pushOP(ctx, instructions, OP_put_arg1);
+      break;
+    case 2:
+      return pushOP(ctx, instructions, OP_put_arg2);
+      break;
+    case 3:
+      return pushOP(ctx, instructions, OP_put_arg3);
+      break;
+    default:
+      return pushOP16(ctx, instructions, OP_put_arg, refIDX);
+    }
+  }
+
+  if (hasFlag(loc, "JSRESTARG")) {
+    fprintf(stderr, "TODO: handle stores to JSRESTARG");
+    exit(1);
+  }
+
+  if (THISINIT) {
+    return pushOP16(ctx, instructions, OP_put_loc_check_init, refIDX);
+  }
+
+  if (!INIT && hasFlag(loc, "JSCONST")) {
+    pushOP(ctx, instructions, OP_drop);
+    return pushOP32Flags(ctx, instructions, OP_throw_error,
+                         JS_NewAtom(ctx, getFlagString(loc, "NAME")), 0);
+  }
+
+  if (SAFE || INIT) {
+    // === SPECIALIZATION ===
+    switch (refIDX) {
+    case 0:
+      return pushOP(ctx, instructions, OP_put_loc0);
+    case 1:
+      return pushOP(ctx, instructions, OP_put_loc1);
+    case 2:
+      return pushOP(ctx, instructions, OP_put_loc2);
+    case 3:
+      return pushOP(ctx, instructions, OP_put_loc3);
+    default: {
+      if (refIDX < 256) {
+        return pushOP8(ctx, instructions, OP_put_loc8, refIDX);
+      } else {
+        return pushOP16(ctx, instructions, OP_put_loc, refIDX);
+      }
+    }
+    }
+  } else {
+    return pushOP16(ctx, instructions, OP_put_loc_check, refIDX);
+  }
+}
+
+void handleRMWrite(JSContext *ctx, vector<BCInstruction> &instructions,
+                   IridiumSEXP *currStmt, bool skipRVAL = false) {
+  // "INIT", "SAFE", "THISINIT"
+  bool INIT = hasFlag(currStmt, "INIT");
+  bool SAFE = hasFlag(currStmt, "SAFE");
+  bool THISINIT = hasFlag(currStmt, "THISINIT");
+
+  IridiumSEXP *loc = currStmt->args[0];
+  ensureTag(loc, "RemoteEnvBinding");
+  int refIDX = getFlagNumber(loc, "REFIDX");
+  IridiumSEXP *rval = currStmt->args[1];
+  IridiumSEXP *resolvedBinding;
+  {
+    resolvedBinding = loc->args[0];
+    while (isTag(resolvedBinding, "RemoteEnvBinding")) {
+      resolvedBinding = resolvedBinding->args[0];
+    }
+
+    ensureTag(resolvedBinding, "EnvBinding");
+  }
+
+  if (skipRVAL == false)
+    lowerToStack(ctx, instructions, rval);
+
+  if (THISINIT) {
+    return pushOP16(ctx, instructions, OP_put_var_ref_check_init, refIDX);
+  }
+
+  if (!INIT && hasFlag(resolvedBinding, "JSCONST")) {
+    pushOP(ctx, instructions, OP_drop);
+    return pushOP32Flags(
+        ctx, instructions, OP_throw_error,
+        JS_NewAtom(ctx, getFlagString(resolvedBinding, "NAME")), 0);
+  }
+
+  if (SAFE || INIT) {
+    switch (refIDX) {
+    case 0:
+      return pushOP(ctx, instructions, OP_put_var_ref0);
+      break;
+    case 1:
+      return pushOP(ctx, instructions, OP_put_var_ref1);
+      break;
+    case 2:
+      return pushOP(ctx, instructions, OP_put_var_ref2);
+      break;
+    case 3:
+      return pushOP(ctx, instructions, OP_put_var_ref3);
+      break;
+    }
+
+    return pushOP16(ctx, instructions, OP_put_var_ref, refIDX);
+  } else {
+    return pushOP16(ctx, instructions, OP_put_var_ref_check, refIDX);
+  }
+}
+
 void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                    IridiumSEXP *currStmt) {
   // std::cout << "stmt_type: " << currStmt->tag << std::endl;
@@ -2638,192 +2829,15 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
   } else if (isTag(currStmt, "NIPCatchCTX")) {
     pushOP(ctx, instructions, OP_nip_catch);
   } else if (isTag(currStmt, "GWrite")) {
-    // "INIT", "SAFE", "DECLVAR", "DECLFUN"
-    bool INIT = hasFlag(currStmt, "INIT");
-    bool DECLVAR = hasFlag(currStmt, "DECLVAR");
-    bool DECLFUN = hasFlag(currStmt, "DECLFUN");
-
-    IridiumSEXP *loc = currStmt->args[0];
-    ensureTag(loc, "GlobalBinding");
-    IridiumSEXP *rval = currStmt->args[1];
-    char *name = getFlagString(loc, "NAME");
-
-    if (DECLVAR) {
-      uint8_t check_flag = 0, define_flag = 0;
-
-#define DEFINE_GLOBAL_LEX_VAR (1 << 7)
-#define DEFINE_GLOBAL_FUNC_VAR (1 << 6)
-
-      if (hasFlag(loc, "JSLET")) {
-        check_flag |= DEFINE_GLOBAL_LEX_VAR;
-        define_flag |= DEFINE_GLOBAL_LEX_VAR;
-        define_flag |= JS_PROP_WRITABLE;
-      } else if (hasFlag(loc, "JSCONST")) {
-        check_flag |= DEFINE_GLOBAL_LEX_VAR;
-        define_flag |= DEFINE_GLOBAL_LEX_VAR;
-      } else if (hasFlag(loc, "JSVAR")) {
-        // Redundant...
-        check_flag = 0;
-        check_flag = 0;
-      } else {
-        fprintf(stderr, "TODO: GWrite DECLVAR invalid flag config\n");
-        exit(1);
-      }
-
-      pushOP32Flags(ctx, instructions, OP_check_define_var,
-                    JS_NewAtom(ctx, name), check_flag);
-      pushOP32Flags(ctx, instructions, OP_define_var, JS_NewAtom(ctx, name),
-                    define_flag);
-    } else if (DECLFUN) {
-      pushOP32Flags(ctx, instructions, OP_check_define_var,
-                    JS_NewAtom(ctx, name), 64);
-      lowerToStack(ctx, instructions, rval);
-      pushOP32Flags(ctx, instructions, OP_define_func, JS_NewAtom(ctx, name),
-                    0);
-    } else if (INIT) {
-      lowerToStack(ctx, instructions, rval);
-      pushOP32(ctx, instructions, OP_put_var_init, JS_NewAtom(ctx, name));
-    } else {
-      lowerToStack(ctx, instructions, rval);
-      pushOP32(ctx, instructions, OP_put_var, JS_NewAtom(ctx, name));
-    }
+    handleGWrite(ctx, instructions, currStmt, false);
   } else if (isTag(currStmt, "LWrite")) {
-    // "INIT", "SAFE", "THISINIT"
-    bool INIT = hasFlag(currStmt, "INIT");
-    bool SAFE = hasFlag(currStmt, "SAFE");
-    bool THISINIT = hasFlag(currStmt, "THISINIT");
-
-    IridiumSEXP *loc = currStmt->args[0];
-    ensureTag(loc, "EnvBinding");
-    int refIDX = getFlagNumber(loc, "REFIDX");
-    IridiumSEXP *rval = currStmt->args[1];
-
-    lowerToStack(ctx, instructions, rval);
-
-    if (hasFlag(loc, "JSARG")) {
-      assert(refIDX > -1);
-
-      // === SPECIALIZATION ===
-      switch (refIDX) {
-      case 0:
-        return pushOP(ctx, instructions, OP_put_arg0);
-        break;
-      case 1:
-        return pushOP(ctx, instructions, OP_put_arg1);
-        break;
-      case 2:
-        return pushOP(ctx, instructions, OP_put_arg2);
-        break;
-      case 3:
-        return pushOP(ctx, instructions, OP_put_arg3);
-        break;
-      default:
-        return pushOP16(ctx, instructions, OP_put_arg, refIDX);
-      }
-    }
-
-    if (hasFlag(loc, "JSRESTARG")) {
-      fprintf(stderr, "TODO: handle stores to JSRESTARG");
-      exit(1);
-    }
-
-    if (THISINIT) {
-      return pushOP16(ctx, instructions, OP_put_loc_check_init, refIDX);
-    }
-
-    if (!INIT && hasFlag(loc, "JSCONST")) {
-      pushOP(ctx, instructions, OP_drop);
-      return pushOP32Flags(ctx, instructions, OP_throw_error,
-                           JS_NewAtom(ctx, getFlagString(loc, "NAME")), 0);
-    }
-
-    if (SAFE || INIT) {
-      // === SPECIALIZATION ===
-      switch (refIDX) {
-      case 0:
-        return pushOP(ctx, instructions, OP_put_loc0);
-      case 1:
-        return pushOP(ctx, instructions, OP_put_loc1);
-      case 2:
-        return pushOP(ctx, instructions, OP_put_loc2);
-      case 3:
-        return pushOP(ctx, instructions, OP_put_loc3);
-      default: {
-        if (refIDX < 256) {
-          return pushOP8(ctx, instructions, OP_put_loc8, refIDX);
-        } else {
-          return pushOP16(ctx, instructions, OP_put_loc, refIDX);
-        }
-      }
-      }
-    } else {
-      return pushOP16(ctx, instructions, OP_put_loc_check, refIDX);
-    }
+    handleLWrite(ctx, instructions, currStmt, false);
   } else if (isTag(currStmt, "RWrite") || isTag(currStmt, "MWrite")) {
-    // "INIT", "SAFE", "THISINIT"
-    bool INIT = hasFlag(currStmt, "INIT");
-    bool SAFE = hasFlag(currStmt, "SAFE");
-    bool THISINIT = hasFlag(currStmt, "THISINIT");
-
-    IridiumSEXP *loc = currStmt->args[0];
-    ensureTag(loc, "RemoteEnvBinding");
-    int refIDX = getFlagNumber(loc, "REFIDX");
-    IridiumSEXP *rval = currStmt->args[1];
-    IridiumSEXP *resolvedBinding;
-    {
-      resolvedBinding = loc->args[0];
-      while (isTag(resolvedBinding, "RemoteEnvBinding")) {
-        resolvedBinding = resolvedBinding->args[0];
-      }
-
-      ensureTag(resolvedBinding, "EnvBinding");
-    }
-
-
-    lowerToStack(ctx, instructions, rval);
-
-    if (THISINIT) {
-      return pushOP16(ctx, instructions, OP_put_var_ref_check_init, refIDX);
-    }
-
-    if (!INIT && hasFlag(resolvedBinding, "JSCONST")) {
-      pushOP(ctx, instructions, OP_drop);
-      return pushOP32Flags(
-          ctx, instructions, OP_throw_error,
-          JS_NewAtom(ctx, getFlagString(resolvedBinding, "NAME")), 0);
-    }
-
-    if (SAFE || INIT) {
-      switch (refIDX) {
-      case 0:
-        return pushOP(ctx, instructions, OP_put_var_ref0);
-        break;
-      case 1:
-        return pushOP(ctx, instructions, OP_put_var_ref1);
-        break;
-      case 2:
-        return pushOP(ctx, instructions, OP_put_var_ref2);
-        break;
-      case 3:
-        return pushOP(ctx, instructions, OP_put_var_ref3);
-        break;
-      }
-
-      return pushOP16(ctx, instructions, OP_put_var_ref, refIDX);
-    } else {
-      return pushOP16(ctx, instructions, OP_put_var_ref_check, refIDX);
-    }
-
-  } else if (isTag(currStmt, "EnvWrite")) {
-    fprintf(stderr, "TODO: Unexpected EnvWrite in STMT (deprecated)\n");
-    exit(1);
-    // handleEnvWrite(ctx, instructions, currStmt, false);
+    handleRMWrite(ctx, instructions, currStmt, false);
   } else if (isTag(currStmt, "JSSuperFieldWrite") ||
              isTag(currStmt, "JSComputedFieldWrite") ||
              isTag(currStmt, "FieldWrite") ||
              isTag(currStmt, "JSPrivateFieldWrite")) {
-    // throw std::runtime_error(
-    //     "Unexpected Field Write and JSComputedFieldWrite outside stack ops");
     lowerToStack(ctx, instructions, currStmt);
     return pushOP(ctx, instructions, OP_drop);
   } else if (isTag(currStmt, "StackRetain")) {
@@ -2937,9 +2951,7 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
   } else if (isTag(currStmt, "Throw")) {
     lowerToStack(ctx, instructions, currStmt->args[0]);
     return pushOP(ctx, instructions, OP_throw);
-  }
-  else if (isTag(currStmt, "JSCheckConstructor"))
-  {
+  } else if (isTag(currStmt, "JSCheckConstructor")) {
     return pushOP(ctx, instructions, OP_check_ctor);
   }
 
@@ -3052,11 +3064,21 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     return;
   } else if (isTag(currStmt, "JSInitialYield")) {
     return pushOP(ctx, instructions, OP_initial_yield);
+  } else if (isTag(currStmt, "CompoundAssn")) {
+    IridiumSEXP *rval = currStmt->args[0];
+    lowerToStack(ctx, instructions, rval);
+    for (int i = 1; i < currStmt->numArgs; i++) {
+      IridiumSEXP *s = currStmt->args[i];
+      if (isTag(s, "GWrite")) {
+        handleGWrite(ctx, instructions, s, true);
+      } else if (isTag(s, "LWrite")) {
+        handleLWrite(ctx, instructions, s, true);
+      } else if (isTag(s, "RWrite") || isTag(s, "MWrite")) {
+        handleRMWrite(ctx, instructions, s, true);
+      }
+    }
   } else if (isTag(currStmt, "Ret")) {
     return pushOP(ctx, instructions, OP_ret);
-  } else if (isTag(currStmt, "Yield")) {
-    lowerToStack(ctx, instructions, currStmt->args[0]);
-    pushOP(ctx, instructions, OP_yield);
   } else if (isTag(currStmt, "StackToHeap")) {
     for (int i = 0; i < currStmt->numArgs; i++) {
       IridiumSEXP *envBinding = currStmt->args[i];
@@ -3704,13 +3726,13 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer,
     ensureTag(remoteBinding, "RemoteEnvBinding");
 
     // MODULE | MODULEI | MODULENSI
-    bool MODULE    = hasFlag(remoteBinding, "MODULE");
-    bool MODULEI   = hasFlag(remoteBinding, "MODULEI");
+    bool MODULE = hasFlag(remoteBinding, "MODULE");
+    bool MODULEI = hasFlag(remoteBinding, "MODULEI");
     bool MODULENSI = hasFlag(remoteBinding, "MODULENSI");
-    int depth      = 0;
+    int depth = 0;
 
     IridiumSEXP *resolvedBinding = remoteBinding->args[0];
-    int  REFIDX    = getFlagNumber(resolvedBinding, "REFIDX");
+    int REFIDX = getFlagNumber(resolvedBinding, "REFIDX");
 
     while (isTag(resolvedBinding, "RemoteEnvBinding")) {
       depth++;
@@ -3718,13 +3740,13 @@ JSValue generateQjsFunction(JSContext *ctx, IridiumSEXP *bbContainer,
     }
     ensureTag(resolvedBinding, "EnvBinding");
 
-    int  VARIDX    = getFlagNumber(resolvedBinding, "REFIDX");
-    char *name     = getFlagString(resolvedBinding, "NAME");
-    bool JSARG     = hasFlag(resolvedBinding, "JSARG");
+    int VARIDX = getFlagNumber(resolvedBinding, "REFIDX");
+    char *name = getFlagString(resolvedBinding, "NAME");
+    bool JSARG = hasFlag(resolvedBinding, "JSARG");
     bool JSRESTARG = hasFlag(resolvedBinding, "JSRESTARG");
-    bool JSLET     = hasFlag(resolvedBinding, "JSLET");
-    bool JSCONST   = hasFlag(resolvedBinding, "JSCONST");
-    bool JSVAR     = hasFlag(resolvedBinding, "JSVAR");
+    bool JSLET = hasFlag(resolvedBinding, "JSLET");
+    bool JSCONST = hasFlag(resolvedBinding, "JSCONST");
+    bool JSVAR = hasFlag(resolvedBinding, "JSVAR");
 
     if (MODULE) {
       b->closure_var[i].is_local = true;
@@ -4300,7 +4322,8 @@ IridiumLoadResult compile_iri_module(JSContext *ctx, json &j) {
         int reqIdx = getFlagNumber(staticExport, "MODULEREQIDX");
         m->export_entries[ex].u.req_module_idx = reqIdx;
         m->export_entries[ex].export_type = JS_EXPORT_TYPE_INDIRECT;
-        m->export_entries[ex].local_name = JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
+        m->export_entries[ex].local_name =
+            JS_NewAtom(ctx, getFlagString(staticExport, "LOCALNAME"));
         m->export_entries[ex].export_name =
             JS_NewAtom(ctx, getFlagString(staticExport, "EXPORTNAME"));
       } else {
@@ -4371,9 +4394,9 @@ void eval_iri_file(JSContext *ctx, const char *filename) {
       JSValue moduleVal = JS_NewModuleValue(ctx, (JSModuleDef *)iriRes.ptr);
 
       if (JS_ResolveModule(ctx, moduleVal) < 0) {
-          JS_FreeValue(ctx, moduleVal);
-          js_std_dump_error(ctx);
-          exit(1);
+        JS_FreeValue(ctx, moduleVal);
+        js_std_dump_error(ctx);
+        exit(1);
       }
 
       auto end = std::chrono::high_resolution_clock::now();
