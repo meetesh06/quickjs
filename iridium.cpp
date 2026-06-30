@@ -2092,16 +2092,6 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, rval->args[1]); // insertionIdx
     lowerToStack(ctx, instructions, rval->args[2]); // spreadVal
     return pushOP(ctx, instructions, OP_append);
-  } else if (isTag(rval, "JSForOfStart")) {
-    // Push obj onto the stack
-    lowerToStack(ctx, instructions, rval->args[0]);
-
-    // obj -> enum_obj iterator_method catch_offset
-    if (getFlagBoolean(rval, "AWAIT")) {
-      return pushOP(ctx, instructions, OP_for_await_of_start);
-    } else {
-      return pushOP(ctx, instructions, OP_for_of_start);
-    }
   } else if (isTag(rval, "JSForOfNext")) {
 
     if (getFlagBoolean(rval, "AWAIT")) {
@@ -2821,7 +2811,18 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
                    IridiumSEXP *currStmt) {
   // std::cout << "stmt_type: " << currStmt->tag << std::endl;
   // printf("stmt_type=%s\n",currStmt->tag);
-  if (isTag(currStmt, "QJSModuleInit")) {
+
+  if (isTag(currStmt, "JSForOfStart")) {
+    // Push obj onto the stack
+    lowerToStack(ctx, instructions, currStmt->args[0]);
+
+    // obj -> enum_obj iterator_method catch_offset
+    if (getFlagBoolean(currStmt, "AWAIT")) {
+      return pushOP(ctx, instructions, OP_for_await_of_start);
+    } else {
+      return pushOP(ctx, instructions, OP_for_of_start);
+    }
+  } else if (isTag(currStmt, "QJSModuleInit")) {
     pushOP(ctx, instructions, OP_push_this);
     pushOP32(ctx, instructions, OP_if_false8, 2);
     instructions.back().presolvedTarget = true;
@@ -2840,16 +2841,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
              isTag(currStmt, "JSPrivateFieldWrite")) {
     lowerToStack(ctx, instructions, currStmt);
     return pushOP(ctx, instructions, OP_drop);
-  } else if (isTag(currStmt, "StackRetain")) {
-    if (currStmt->numArgs > 0) {
-      for (int i = 0; i < currStmt->numArgs; i++) {
-        lowerToStack(ctx, instructions, currStmt->args[i]);
-      }
-    }
-    int nVal = getFlagNumber(currStmt, "NVAL");
-    int nip = getFlagNumber(currStmt, "NIP");
-    keepNDropM(ctx, instructions, nVal, nip);
-    return;
   } else if (isTag(currStmt, "StackReject")) {
     if (isTag(currStmt->args[0], "EnvWrite")) {
       fprintf(stderr,
