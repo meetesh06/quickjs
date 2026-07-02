@@ -1968,7 +1968,7 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
     return pushOP(ctx, instructions, OP_put_super_value);
   } else if (isTag(rval, "Null")) {
     return pushOP(ctx, instructions, OP_null);
-  } else if (isTag(rval, "BitInt")) {
+  } else if (isTag(rval, "JSBigInt")) {
     char *str = getFlagString(rval, "IridiumPrimitive");
     size_t len = strlen(str);
 
@@ -4041,8 +4041,11 @@ JSValue generateBytecode(JSContext *ctx, IridiumSEXP *node) {
       IridiumSEXP *poolBinding = lambdasList->args[j];
       ensureTag(poolBinding, "PoolBinding");
 
+      IridiumSEXP *lambdaSEXP = poolBinding->args[0];
+      ensureTag(lambdaSEXP, "Lambda");
+
       // StartBBIDX of Closure that is needed
-      int targetStartBBIDX = getFlagNumber(poolBinding, "StartBBIDX");
+      int targetStartBBIDX = getFlagNumber(lambdaSEXP, "StartBBIDX");
 
       // Find the location of the target closure
       JSValue res;
