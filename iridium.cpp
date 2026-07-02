@@ -2720,8 +2720,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     pushOP32(ctx, instructions, OP_if_false8, 2);
     instructions.back().presolvedTarget = true;
     pushOP(ctx, instructions, OP_return_undef);
-  } else if (isTag(currStmt, "NIPCatchCTX")) {
-    pushOP(ctx, instructions, OP_nip_catch);
   } else if (isTag(currStmt, "GWrite")) {
     handleGWrite(ctx, instructions, currStmt, false);
   } else if (isTag(currStmt, "LWrite")) {
