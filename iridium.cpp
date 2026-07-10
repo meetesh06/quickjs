@@ -2609,7 +2609,7 @@ void handleLWrite(JSContext *ctx, vector<BCInstruction> &instructions,
     exit(1);
   }
 
-  if (THISINIT) {
+  if (THISINIT && !INIT) {
     return pushOP16(ctx, instructions, OP_put_loc_check_init, refIDX);
   }
 
@@ -2705,7 +2705,41 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
   // std::cout << "stmt_type: " << currStmt->tag << std::endl;
   // printf("stmt_type=%s\n",currStmt->tag);
 
-  if (isTag(currStmt, "JSForOfStart")) {
+  // New AMP nodes
+  if (
+    isTag(currStmt, "EnvRead")
+    || isTag(currStmt, "FieldRead")
+    || isTag(currStmt, "CallSite")
+    || isTag(currStmt, "Apply")
+    || isTag(currStmt, "PVTEnvRead")
+    || isTag(currStmt, "JSPrivateFieldRead")
+    || isTag(currStmt, "JSCatchContext")
+    || isTag(currStmt, "JSBinop")
+    || isTag(currStmt, "JSUnop")
+    || isTag(currStmt, "Unop")
+    || isTag(currStmt, "Binop")
+    || isTag(currStmt, "JSComputedFieldRead")
+    || isTag(currStmt, "JSSuperFieldRead")
+    || isTag(currStmt, "JSToObject")
+    || isTag(currStmt, "JSAppend")
+    || isTag(currStmt, "JSCopyDataProperties")
+    || isTag(currStmt, "UNOPDelMemberExpr")
+    || isTag(currStmt, "UNOPDelVar")
+    || isTag(currStmt, "Await")
+    || isTag(currStmt, "IDOP")
+    || isTag(currStmt, "JSIDOP")
+    || isTag(currStmt, "DCTRRet")
+    || isTag(currStmt, "ToNumeric")
+
+    || isTag(currStmt, "JSTemplate")
+  ) {
+    lowerToStack(ctx, instructions, currStmt);
+    pushOP(ctx, instructions, OP_drop);
+  }
+  else if (isTag(currStmt, "Yield")) {
+    fprintf(stderr, "Await not expected at stmt level...");
+    exit(1);
+  } else if (isTag(currStmt, "JSForOfStart")) {
     // Push obj onto the stack
     lowerToStack(ctx, instructions, currStmt->args[0]);
 
@@ -2789,13 +2823,8 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
     lowerToStack(ctx, instructions, currStmt->args[0]);
     lowerToStack(ctx, instructions, currStmt->args[1]);
     return pushOP(ctx, instructions, OP_add_brand);
-  } else if (isTag(currStmt, "EnvRead")) {
-    lowerToStack(ctx, instructions, currStmt);
-    pushOP(ctx, instructions, OP_drop);
   } else if (isTag(currStmt, "JSForOfIteratorClose")) {
     return pushOP(ctx, instructions, OP_iterator_close);
-  } else if (isTag(currStmt, "JSCatchContext")) {
-    pushOP(ctx, instructions, OP_drop);
   } else if (isTag(currStmt, "JSSetHome")) {
     IridiumSEXP *homeObj = currStmt->args[0];
     lowerToStack(ctx, instructions, homeObj);
@@ -2818,12 +2847,6 @@ void handleIriStmt(JSContext *ctx, vector<BCInstruction> &instructions,
       lowerToStack(ctx, instructions, name);
       pushOP(ctx, instructions, OP_set_name_computed);
     }
-    pushOP(ctx, instructions, OP_drop);
-  } else if (isTag(currStmt, "CallSite")) {
-    lowerToStack(ctx, instructions, currStmt);
-    pushOP(ctx, instructions, OP_drop);
-  } else if (isTag(currStmt, "Apply")) {
-    lowerToStack(ctx, instructions, currStmt);
     pushOP(ctx, instructions, OP_drop);
   } else if (isTag(currStmt, "JSPrivateFieldWrite")) {
     handleJSPrivateFieldWrite(ctx, instructions, currStmt);
