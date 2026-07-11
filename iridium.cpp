@@ -2061,6 +2061,9 @@ void lowerToStack(JSContext *ctx, vector<BCInstruction> &instructions,
 
     // Keep 1, Nip 2
     return keepNDropM(ctx, instructions, 1, 2);
+  } else if (isTag(rval, "ThisINIT")) {
+    // lowerToStack(ctx, instructions, rval->args[0]); We artifically create this read dependency to make Liveness analysis cleaner
+    return lowerToStack(ctx, instructions, rval->args[1]);
   } else if (isTag(rval, "JSAppend")) {
     lowerToStack(ctx, instructions, rval->args[0]); // tmp
     lowerToStack(ctx, instructions, rval->args[1]); // insertionIdx
